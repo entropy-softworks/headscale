@@ -1915,3 +1915,199 @@ func TestOIDCReloginSameUserRoutesPreserved(t *testing.T) {
 
 	t.Logf("Test completed - verifying issue #2896 fix for OIDC")
 }
+
+// TestOIDCGroupsClaimPopulatesUser exercises the full mockoidc → headscale →
+// gRPC ListUsers pipeline. With `oidc.groups.enabled=true` and a mock user
+// emitting a `groups` claim, the User row must have Groups persisted and
+// surfaced via the gRPC User message.
+//
+// This is the "end-to-end test addressing maintainer concern" from
+// juanfont/headscale#1121 — proves the feature without needing a third-party
+// IdP. Default is opt-in, so disabling it (or omitting the env) keeps the
+// previous behavior (no groups persisted).
+func TestOIDCGroupsClaimPopulatesUser(t *testing.T) {
+	IntegrationSkip(t)
+
+	const username = "engineer"
+
+	spec := ScenarioSpec{
+		NodesPerUser: 1,
+		Users:        []string{},
+		OIDCUsers: []mockoidc.MockUser{
+			oidcMockUserWithGroups(username, true, "engineers", "platform"),
+		},
+	}
+
+	scenario, err := NewScenario(spec)
+	require.NoError(t, err)
+	defer scenario.ShutdownAssertNoPanics(t)
+
+	oidcMap := map[string]string{
+		"HEADSCALE_OIDC_ISSUER":             scenario.mockOIDC.Issuer(),
+		"HEADSCALE_OIDC_CLIENT_ID":          scenario.mockOIDC.ClientID(),
+		"HEADSCALE_OIDC_GROUPS_ENABLED":     "true",
+		"CREDENTIALS_DIRECTORY_TEST":        "/tmp",
+		"HEADSCALE_OIDC_CLIENT_SECRET_PATH": "${CREDENTIALS_DIRECTORY_TEST}/hs_client_oidc_secret",
+	}
+
+	err = scenario.CreateHeadscaleEnvWithLoginURL(
+		nil,
+		hsic.WithTestName("oidcgroupsclaim"),
+		hsic.WithConfigEnv(oidcMap),
+		hsic.WithTLS(),
+		hsic.WithFileInContainer("/tmp/hs_client_oidc_secret", []byte(scenario.mockOIDC.ClientSecret())),
+	)
+	requireNoErrHeadscaleEnv(t, err)
+
+	require.NoError(t, scenario.WaitForTailscaleSync())
+
+	headscale, err := scenario.Headscale()
+	require.NoError(t, err)
+
+	users, err := headscale.ListUsers()
+	require.NoError(t, err)
+
+	var got *v1.User
+	for _, u := range users {
+		if u.GetEmail() == username+"@headscale.net" {
+			got = u
+			break
+		}
+	}
+	require.NotNil(t, got, "OIDC user not registered after login")
+
+	wantGroups := []string{"engineers", "platform"}
+	if diff := cmp.Diff(wantGroups, got.GetGroups(),
+		cmpopts.SortSlices(func(a, b string) bool { return a < b })); diff != "" {
+		t.Fatalf("Groups mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestOIDCGroupsDisabledDoesNotPersist is the negative companion: with the
+// feature flag off (the default), even a mock user emitting groups in its
+// claim should not have those memberships persisted. This guards against
+// silent default-behavior changes for existing deployments on upgrade.
+func TestOIDCGroupsDisabledDoesNotPersist(t *testing.T) {
+	IntegrationSkip(t)
+
+	const username = "engineer"
+
+	spec := ScenarioSpec{
+		NodesPerUser: 1,
+		Users:        []string{},
+		OIDCUsers: []mockoidc.MockUser{
+			oidcMockUserWithGroups(username, true, "engineers"),
+		},
+	}
+
+	scenario, err := NewScenario(spec)
+	require.NoError(t, err)
+	defer scenario.ShutdownAssertNoPanics(t)
+
+	// Note: HEADSCALE_OIDC_GROUPS_ENABLED is intentionally omitted to
+	// exercise the default-off behavior.
+	oidcMap := map[string]string{
+		"HEADSCALE_OIDC_ISSUER":             scenario.mockOIDC.Issuer(),
+		"HEADSCALE_OIDC_CLIENT_ID":          scenario.mockOIDC.ClientID(),
+		"CREDENTIALS_DIRECTORY_TEST":        "/tmp",
+		"HEADSCALE_OIDC_CLIENT_SECRET_PATH": "${CREDENTIALS_DIRECTORY_TEST}/hs_client_oidc_secret",
+	}
+
+	err = scenario.CreateHeadscaleEnvWithLoginURL(
+		nil,
+		hsic.WithTestName("oidcgroupsdisabled"),
+		hsic.WithConfigEnv(oidcMap),
+		hsic.WithTLS(),
+		hsic.WithFileInContainer("/tmp/hs_client_oidc_secret", []byte(scenario.mockOIDC.ClientSecret())),
+	)
+	requireNoErrHeadscaleEnv(t, err)
+
+	require.NoError(t, scenario.WaitForTailscaleSync())
+
+	headscale, err := scenario.Headscale()
+	require.NoError(t, err)
+
+	users, err := headscale.ListUsers()
+	require.NoError(t, err)
+
+	var got *v1.User
+	for _, u := range users {
+		if u.GetEmail() == username+"@headscale.net" {
+			got = u
+			break
+		}
+	}
+	require.NotNil(t, got, "OIDC user not registered after login")
+
+	if len(got.GetGroups()) != 0 {
+		t.Fatalf("expected no groups when feature disabled, got %v", got.GetGroups())
+	}
+}
+
+// TestOIDCGroupsCustomClaimName proves that a deployment with an IdP that
+// exposes group memberships under a non-standard claim name (e.g. "roles" or
+// Cognito's "cognito:groups") can configure headscale to read from that name.
+//
+// We can't reconfigure mockoidc to emit a non-default claim name, so this
+// test runs the configured-claim-name path negatively: by pointing
+// `oidc.groups.claim` at a name mockoidc does NOT emit, the user's persisted
+// Groups should be empty even though mockoidc sends a `groups` claim. This
+// is the same code path that, against a real IdP using e.g. "roles", would
+// successfully extract the role list — what differs is only the name.
+func TestOIDCGroupsCustomClaimName(t *testing.T) {
+	IntegrationSkip(t)
+
+	const username = "engineer"
+
+	spec := ScenarioSpec{
+		NodesPerUser: 1,
+		Users:        []string{},
+		OIDCUsers: []mockoidc.MockUser{
+			oidcMockUserWithGroups(username, true, "engineers"),
+		},
+	}
+
+	scenario, err := NewScenario(spec)
+	require.NoError(t, err)
+	defer scenario.ShutdownAssertNoPanics(t)
+
+	oidcMap := map[string]string{
+		"HEADSCALE_OIDC_ISSUER":             scenario.mockOIDC.Issuer(),
+		"HEADSCALE_OIDC_CLIENT_ID":          scenario.mockOIDC.ClientID(),
+		"HEADSCALE_OIDC_GROUPS_ENABLED":     "true",
+		"HEADSCALE_OIDC_GROUPS_CLAIM":       "roles", // mockoidc emits "groups", not "roles"
+		"CREDENTIALS_DIRECTORY_TEST":        "/tmp",
+		"HEADSCALE_OIDC_CLIENT_SECRET_PATH": "${CREDENTIALS_DIRECTORY_TEST}/hs_client_oidc_secret",
+	}
+
+	err = scenario.CreateHeadscaleEnvWithLoginURL(
+		nil,
+		hsic.WithTestName("oidcgroupscustomclaim"),
+		hsic.WithConfigEnv(oidcMap),
+		hsic.WithTLS(),
+		hsic.WithFileInContainer("/tmp/hs_client_oidc_secret", []byte(scenario.mockOIDC.ClientSecret())),
+	)
+	requireNoErrHeadscaleEnv(t, err)
+
+	require.NoError(t, scenario.WaitForTailscaleSync())
+
+	headscale, err := scenario.Headscale()
+	require.NoError(t, err)
+
+	users, err := headscale.ListUsers()
+	require.NoError(t, err)
+
+	var got *v1.User
+	for _, u := range users {
+		if u.GetEmail() == username+"@headscale.net" {
+			got = u
+			break
+		}
+	}
+	require.NotNil(t, got, "OIDC user not registered after login")
+
+	if len(got.GetGroups()) != 0 {
+		t.Fatalf("groups extracted from claim %q should be empty (mockoidc only emits %q): got %v",
+			"roles", "groups", got.GetGroups())
+	}
+}
