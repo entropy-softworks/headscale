@@ -281,16 +281,79 @@ func (g Group) Resolve(p *Policy, users types.Users, nodes views.Slice[types.Nod
 	var ips netipx.IPSetBuilder
 	var errs []error
 
-	for _, user := range p.Groups[g] {
-		uips, err := user.Resolve(nil, users, nodes)
-		if err != nil {
-			errs = append(errs, err)
+	for _, member := range p.Groups[g] {
+		// Existing behaviour: treat each entry as a user identifier
+		// (email / Name / provider id).
+		uips, userErr := member.Resolve(nil, users, nodes)
+		if userErr == nil {
+			ips.AddSet(uips)
 		}
 
-		ips.AddSet(uips)
+		// Additionally, treat the entry as an OIDC group identifier:
+		// pull in every node whose owner has this group in their
+		// persisted `Groups` claim. This lets policy files reference
+		// IdP groups directly, e.g.
+		//   "group:admins": ["security-team@example.com"]
+		// where `security-team@example.com` is an OIDC-asserted group
+		// name (from the IdP's `groups` claim), not a headscale user.
+		memberStr := strings.TrimSuffix(member.String(), "@")
+		resolveOIDCGroup(memberStr, users, nodes, &ips)
+
+		// If neither path produced a match, surface the original
+		// user-lookup error so operators still get a clear signal
+		// when an identifier truly does not correspond to anything.
+		if userErr != nil && !userHasOIDCGroup(memberStr, users) {
+			errs = append(errs, userErr)
+		}
 	}
 
 	return buildIPSetMultiErr(&ips, errs)
+}
+
+// resolveOIDCGroup collects node IPs for every user whose OIDC groups
+// claim contains `group`, appending them to ips.
+func resolveOIDCGroup(
+	group string,
+	users types.Users,
+	nodes views.Slice[types.NodeView],
+	ips *netipx.IPSetBuilder,
+) {
+	matchingUserIDs := make(map[uint]struct{})
+	for _, u := range users {
+		for _, g := range u.Groups {
+			if g == group {
+				matchingUserIDs[u.ID] = struct{}{}
+				break
+			}
+		}
+	}
+
+	if len(matchingUserIDs) == 0 {
+		return
+	}
+
+	for _, node := range nodes.All() {
+		if node.IsTagged() || !node.User().Valid() {
+			continue
+		}
+		if _, ok := matchingUserIDs[uint(node.User().ID())]; ok {
+			node.AppendToIPSet(ips)
+		}
+	}
+}
+
+// userHasOIDCGroup reports whether any user carries `group` in their
+// persisted OIDC Groups claim. Used to suppress noisy user-lookup
+// errors when a policy entry is intentionally an IdP group.
+func userHasOIDCGroup(group string, users types.Users) bool {
+	for _, u := range users {
+		for _, g := range u.Groups {
+			if g == group {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Tag is a special string which is always prefixed with `tag:`.
@@ -1333,7 +1396,7 @@ func (p Protocol) Description() string {
 	case ProtocolFC:
 		return "Fibre Channel"
 	case ProtocolWildcard:
-		return "Wildcard (not supported - use specific protocol)"
+		return "All Protocols"
 	default:
 		return "Unknown Protocol"
 	}
@@ -1347,7 +1410,7 @@ func (p Protocol) parseProtocol() ([]int, bool) {
 		// Empty protocol applies to TCP and UDP traffic only
 		return []int{protocolTCP, protocolUDP}, false
 	case ProtocolWildcard:
-		// Wildcard protocol - defensive handling (should not reach here due to validation)
+		// nil IPProto in a tailcfg.FilterRule matches all protocols.
 		return nil, false
 	case ProtocolIGMP:
 		return []int{protocolIGMP}, true
@@ -1405,11 +1468,8 @@ func (p Protocol) validate() error {
 	switch p {
 	case "", ProtocolICMP, ProtocolIGMP, ProtocolIPv4, ProtocolIPInIP,
 		ProtocolTCP, ProtocolEGP, ProtocolIGP, ProtocolUDP, ProtocolGRE,
-		ProtocolESP, ProtocolAH, ProtocolSCTP:
+		ProtocolESP, ProtocolAH, ProtocolSCTP, ProtocolWildcard:
 		return nil
-	case ProtocolWildcard:
-		// Wildcard "*" is not allowed - Tailscale rejects it
-		return fmt.Errorf("proto name \"*\" not known; use protocol number 0-255 or protocol name (icmp, tcp, udp, etc.)")
 	default:
 		// Try to parse as a numeric protocol number
 		str := string(p)

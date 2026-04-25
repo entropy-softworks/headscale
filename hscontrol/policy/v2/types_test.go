@@ -1186,7 +1186,7 @@ func TestUnmarshalPolicy(t *testing.T) {
 			wantErr: `unknown field "proto"`,
 		},
 		{
-			name: "protocol-wildcard-not-allowed",
+			name: "protocol-wildcard-allows-all",
 			input: `
 {
 	"acls": [
@@ -1199,7 +1199,23 @@ func TestUnmarshalPolicy(t *testing.T) {
 	]
 }
 `,
-			wantErr: `proto name "*" not known; use protocol number 0-255 or protocol name (icmp, tcp, udp, etc.)`,
+			want: &Policy{
+				ACLs: []ACL{
+					{
+						Action:   "accept",
+						Protocol: "*",
+						Sources: Aliases{
+							Wildcard,
+						},
+						Destinations: []AliasWithPorts{
+							{
+								Alias: Wildcard,
+								Ports: []tailcfg.PortRange{tailcfg.PortRangeAny},
+							},
+						},
+					},
+				},
+			},
 		},
 		{
 			name: "protocol-case-insensitive-uppercase",
