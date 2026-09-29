@@ -222,15 +222,22 @@ func TestGrantPolicies(t *testing.T) { //nolint:gocyclo
 			srv.App.Change(changes...)
 		}
 
+		// Wait for the filter itself, not merely for any update: the
+		// batch that carries the policy change may also carry unrelated
+		// patches (such as c2 coming online), delivered as separate
+		// netmaps, and a count-based wait would return on the first of
+		// them and leave the rest to satisfy the phase 2 wait below.
 		c1.WaitForCondition(t, "first grant policy update",
 			10*time.Second,
 			func(nm *netmap.NetworkMap) bool {
-				return c1.UpdateCount() > countC1
+				return c1.UpdateCount() > countC1 &&
+					onlyDstPort(nm.PacketFilter, 22)
 			})
 		c2.WaitForCondition(t, "first grant policy update",
 			10*time.Second,
 			func(nm *netmap.NetworkMap) bool {
-				return c2.UpdateCount() > countC2
+				return c2.UpdateCount() > countC2 &&
+					onlyDstPort(nm.PacketFilter, 22)
 			})
 
 		// Capture the update count after first policy.
@@ -267,16 +274,19 @@ func TestGrantPolicies(t *testing.T) { //nolint:gocyclo
 			srv.App.Change(changes...)
 		}
 
-		// Wait for the second policy update to arrive.
+		// Wait for the second policy's filter to arrive. As above,
+		// counting updates alone would accept leftovers of phase 1.
 		c1.WaitForCondition(t, "second grant policy update",
 			10*time.Second,
 			func(nm *netmap.NetworkMap) bool {
-				return c1.UpdateCount() > updateCountPhase1
+				return c1.UpdateCount() > updateCountPhase1 &&
+					hasCapMatches(nm.PacketFilter)
 			})
 		c2.WaitForCondition(t, "second grant policy update",
 			10*time.Second,
 			func(nm *netmap.NetworkMap) bool {
-				return c2.UpdateCount() > countC2
+				return c2.UpdateCount() > countC2 &&
+					hasCapMatches(nm.PacketFilter)
 			})
 
 		// Verify the second policy added cap grants that weren't
@@ -1100,6 +1110,24 @@ func hasCapMatches(matches []filtertype.Match) bool {
 	}
 
 	return false
+}
+
+// onlyDstPort reports whether matches is non-empty and every destination in
+// it is limited to port.
+func onlyDstPort(matches []filtertype.Match, port uint16) bool {
+	if len(matches) == 0 {
+		return false
+	}
+
+	for _, m := range matches {
+		for _, d := range m.Dsts {
+			if d.Ports.First != port || d.Ports.Last != port {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 // hasDstRules returns true if any [filtertype.Match] in the slice contains a
