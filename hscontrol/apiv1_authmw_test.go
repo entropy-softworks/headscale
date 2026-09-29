@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +27,9 @@ func TestAPIV1AuthMiddleware(t *testing.T) {
 	valid, _, err := app.state.CreateAPIKey(&expiry)
 	require.NoError(t, err)
 
+	scimToken, _, err := app.state.CreateSCIMToken("idp", nil)
+	require.NoError(t, err)
+
 	tests := []struct {
 		name       string
 		authHeader string
@@ -34,6 +39,7 @@ func TestAPIV1AuthMiddleware(t *testing.T) {
 		{name: "no bearer prefix", authHeader: "tskey-invalid", wantStatus: http.StatusUnauthorized},
 		{name: "invalid bearer token", authHeader: "Bearer tskey-invalid", wantStatus: http.StatusUnauthorized},
 		{name: "valid api key", authHeader: "Bearer " + valid, wantStatus: http.StatusOK},
+		{name: "scim token is not an api key", authHeader: "Bearer " + scimToken, wantStatus: http.StatusUnauthorized},
 	}
 
 	for _, tt := range tests {
@@ -107,4 +113,54 @@ func TestAPIV1Unauthorized401(t *testing.T) {
 	var problem map[string]any
 	require.NoError(t, json.Unmarshal(body, &problem), "401 body must be JSON: %s", body)
 	assert.NotContains(t, problem, "users")
+}
+
+// TestAPIV1ScimTokenRoutesRequireAuth proves every SCIM token route, mounted on
+// the real router, rejects a request without an API key before it reaches the
+// handler, and that a SCIM token does not stand in for one.
+func TestAPIV1ScimTokenRoutesRequireAuth(t *testing.T) {
+	app := createTestApp(t)
+	handler := app.HTTPHandler()
+
+	scimToken, tok, err := app.state.CreateSCIMToken("idp", nil)
+	require.NoError(t, err)
+
+	id := strconv.FormatUint(tok.ID, 10)
+
+	routes := []struct {
+		method, path string
+	}{
+		{http.MethodPost, "/api/v1/scim/token"},
+		{http.MethodGet, "/api/v1/scim/token"},
+		{http.MethodPost, "/api/v1/scim/token/" + id + "/revoke"},
+		{http.MethodDelete, "/api/v1/scim/token/" + id},
+	}
+
+	for _, route := range routes {
+		for name, header := range map[string]string{
+			"no credentials": "",
+			"scim token":     "Bearer " + scimToken,
+		} {
+			t.Run(route.method+" "+route.path+" "+name, func(t *testing.T) {
+				req := httptest.NewRequestWithContext(
+					context.Background(), route.method, route.path, strings.NewReader(`{}`),
+				)
+				req.Header.Set("Content-Type", "application/json")
+
+				if header != "" {
+					req.Header.Set("Authorization", header)
+				}
+
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, req)
+
+				assert.Equalf(t, http.StatusUnauthorized, rec.Code, "body: %s", rec.Body.String())
+			})
+		}
+	}
+
+	// Nothing was revoked or deleted.
+	got, err := app.state.GetSCIMTokenByID(tok.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.Revoked)
 }

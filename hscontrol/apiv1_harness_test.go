@@ -222,11 +222,11 @@ func writeGolden(t *testing.T, gpath string, hum httpResult) {
 
 // nonDeterministicRe matches values that embed per-app random material and so
 // cannot match byte-for-byte across apps: masked key/secret prefixes
-// (hskey-auth-<prefix>-***, hskey-api-<prefix>-***) and Tailscale key material
-// (mkey:/nodekey:/discokey:<hex>). Neutralised to a sentinel when neutralise is
-// true.
+// (hskey-auth-<prefix>-***, hskey-api-<prefix>-***, hskey-scim-<prefix>-***)
+// and Tailscale key material (mkey:/nodekey:/discokey:<hex>). Neutralised to a
+// sentinel when neutralise is true.
 var nonDeterministicRe = regexp.MustCompile(
-	`^(hskey-(auth|api)-[0-9a-f]+-\*\*\*|(mkey|nodekey|discokey):[0-9a-f]+)$`,
+	`^(hskey-(auth|api|scim)-[0-9a-f]+-\*\*\*|(mkey|nodekey|discokey):[0-9a-f]+)$`,
 )
 
 // normalizeJSON decodes JSON for order-independent, type-aware comparison.
