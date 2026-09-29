@@ -185,6 +185,7 @@ nav:
       - Configuration: ref/configuration.md
       - Registration methods: ref/registration.md
       - OpenID Connect: ref/oidc.md
+      - SCIM provisioning: ref/scim.md
       - Routes: ref/routes.md
       - TLS: ref/tls.md
       - Policy: ref/policy.md

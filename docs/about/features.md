@@ -40,6 +40,11 @@ provides on overview of Headscale's feature and compatibility with the Tailscale
     - [x] Basic registration
     - [x] Update user profile from identity provider
     - [x] [Use identity provider groups in the policy](../ref/oidc.md#use-identity-provider-groups-in-the-policy)
+- [x] [User and group provisioning (SCIM 2.0)](../ref/scim.md)
+    - [x] Microsoft Entra ID, Okta, Authentik and other SCIM 2.0 clients
+    - [x] [Deprovisioning](../ref/scim.md#deprovisioning): suspend or delete users and their nodes
+    - [x] [Provisioned groups in the policy](../ref/scim.md#reference-scim-groups-in-the-policy)
+- [x] [User suspension](../ref/scim.md#suspend-and-restore-users-manually)
 - [ ] [Funnel](https://tailscale.com/docs/features/tailscale-funnel) ([#1040](https://github.com/juanfont/headscale/issues/1040))
 - [x] [Serve](https://tailscale.com/docs/features/tailscale-serve)
 - [ ] [Network flow logs](https://tailscale.com/docs/features/logging/network-flow-logs) ([#1687](https://github.com/juanfont/headscale/issues/1687))

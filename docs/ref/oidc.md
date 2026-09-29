@@ -6,6 +6,7 @@ Headscale supports authentication via external identity providers using OpenID C
 - [Proof Key for Code Exchange (PKCE) code verification](#enable-pkce-recommended)
 - [Authorization based on a user's domain, email address or group membership](#authorize-users-with-filters)
 - Synchronization of [standard OIDC claims](#supported-oidc-claims)
+- Optional [SCIM provisioning](scim.md) of users and groups by the identity provider
 
 Please see [limitations](#limitations) for known issues and limitations.
 
@@ -286,6 +287,10 @@ and as auto approvers.
     OIDC is disabled, or, for groups of the previous domain, when `oidc.groups.domain` changes; the last two take
     effect at startup. A short [`node.expiry`](#customize-node-expiration) makes users log in, and so refresh their memberships,
     more often. To refresh them right away, have the user log in again with `tailscale up --force-reauth`.
+
+    To apply group changes, and to deactivate users, without waiting for a login, use [SCIM provisioning](scim.md)
+    instead: the identity provider then pushes users and groups to Headscale as they change. Groups provisioned
+    through SCIM are [granted by SCIM only](scim.md#groups-managed-by-scim); the groups claim no longer grants them.
 
 !!! warning "Only sync groups your users can't change"
 
