@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/juanfont/headscale/hscontrol/db"
 	"github.com/juanfont/headscale/hscontrol/types"
@@ -502,4 +503,116 @@ func TestReleaseSCIMGroup(t *testing.T) {
 	_, err = s.SetUserGroups(uid, types.GroupSourceOIDC, []string{"eng@example.com"})
 	require.NoError(t, err)
 	assert.Contains(t, filterSrcIPs(s), daveIP, "logins grant a released group again")
+}
+
+// TestDeleteSCIMUserRefusesOtherUsers checks that deprovisioning reaches
+// only users SCIM manages: an OIDC user and a local user are "not found",
+// and keep their nodes and their unsuspended state.
+func TestDeleteSCIMUserRefusesOtherUsers(t *testing.T) {
+	f := scimTestState(t)
+	s := f.s
+
+	for _, node := range []*types.Node{f.daveNode, f.louNode} {
+		changes, err := s.DeleteSCIMUser(types.UserID(*node.UserID))
+		require.ErrorIs(t, err, db.ErrUserNotFound)
+		assert.Empty(t, changes)
+
+		user, err := s.GetUserByID(types.UserID(*node.UserID))
+		require.NoError(t, err)
+		assert.False(t, user.IsSuspended())
+
+		_, ok := s.GetNodeByID(node.ID)
+		assert.True(t, ok, "the node is kept")
+	}
+}
+
+// TestSCIMWritesDoNotWaitForBatchTick pins the latency of SCIM writes: with
+// the production NodeStore batch timeout, a write that only rebuilds peer
+// maps completes at once rather than on the next batch tick, and a group
+// change refreshes all its members' nodes in one batch rather than one per
+// member.
+func TestSCIMWritesDoNotWaitForBatchTick(t *testing.T) {
+	const batchTimeout = 500 * time.Millisecond
+
+	cfg := persistTestConfig(t.TempDir() + "/headscale.db")
+	cfg.Tuning.NodeStoreBatchSize = 100
+	cfg.Tuning.NodeStoreBatchTimeout = batchTimeout
+
+	s, err := NewState(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	timed := func(name string, limit time.Duration, fn func()) {
+		t.Helper()
+
+		start := time.Now()
+
+		fn()
+
+		took := time.Since(start)
+		t.Logf("%s took %v", name, took)
+		assert.Less(t, took, limit, name)
+	}
+
+	const fast = 200 * time.Millisecond
+
+	var user *types.User
+
+	timed("create user", fast, func() {
+		user, _, err = s.CreateSCIMUser(types.SCIMUserAttributes{UserName: "erin@example.com", Active: true}, false)
+		require.NoError(t, err)
+	})
+
+	uid := types.UserID(user.ID)
+
+	timed("deactivate user", fast, func() {
+		_, _, err = s.PatchSCIMUser(uid, func(a *types.SCIMUserAttributes) error {
+			a.Active = false
+
+			return nil
+		})
+		require.NoError(t, err)
+	})
+
+	var group *types.Group
+
+	timed("create group", fast, func() {
+		group, _, err = s.CreateSCIMGroup(scimTestDomain, "Eng", "", nil)
+		require.NoError(t, err)
+	})
+
+	timed("add member", fast, func() {
+		_, _, err = s.UpdateSCIMGroup(scimTestDomain, group.ID,
+			types.SCIMGroupOp{Kind: types.SCIMGroupAddMembers, Members: []types.UserID{uid}})
+		require.NoError(t, err)
+	})
+
+	// Members with nodes: their node copies are refreshed in one write,
+	// which may wait for one tick, not one per member.
+	members := make([]types.UserID, 0, 5)
+
+	for i := range 5 {
+		u, _, err := s.CreateSCIMUser(types.SCIMUserAttributes{
+			UserName: "member" + string(rune('a'+i)) + "@example.com", Active: true,
+		}, false)
+		require.NoError(t, err)
+
+		node := s.CreateRegisteredNodeForTest(u, "member-node-"+string(rune('a'+i)))
+		node.User = u
+		s.PutNodeInStoreForTest(*node)
+
+		members = append(members, types.UserID(u.ID))
+	}
+
+	timed("add members with nodes", 2*batchTimeout, func() {
+		_, _, err = s.UpdateSCIMGroup(scimTestDomain, group.ID,
+			types.SCIMGroupOp{Kind: types.SCIMGroupAddMembers, Members: members})
+		require.NoError(t, err)
+	})
+
+	for _, m := range members {
+		for _, n := range s.ListNodesByUser(m).All() {
+			assert.Equal(t, []string{"eng@example.com"}, n.User().GroupNames(), "node copies show the group")
+		}
+	}
 }

@@ -218,8 +218,11 @@ type State struct {
 	// caller snapshot or resurrected by an update racing with deletion.
 	persistMu sync.Mutex
 
-	// usersMu serialises [State.updatePolicyManagerUsers]. Taken last: no
-	// other State lock is acquired while it is held.
+	// usersMu serialises the read-then-publish sequences that copy user
+	// state into the NodeStore and policy manager (the suspended set, the
+	// user list), so that of two concurrent writes, the one publishing an
+	// older read cannot land last. It is held only around those sequences
+	// and never while taking another State lock.
 	usersMu sync.Mutex
 
 	// selfRefresh holds nodes whose own DNS config inputs changed (NextDNS
@@ -3474,13 +3477,11 @@ func (s *State) setUserSuspended(userID types.UserID, at time.Time) (change.Chan
 // after the user's suspension changed in the database (to suspended), and
 // returns the change to broadcast.
 func (s *State) applySuspensionChange(userID types.UserID, suspendedNow bool) (change.Change, error) {
-	suspended, err := hsdb.ListSuspendedUserIDs(s.db.DB)
+	// Cuts (or restores) the nodes' peers and routes before returning.
+	err := s.syncSuspendedUsers()
 	if err != nil {
 		return change.Change{}, err
 	}
-
-	// Cuts (or restores) the nodes' peers and routes before returning.
-	s.nodeStore.SetSuspendedUsers(suspended)
 
 	err = s.refreshNodeStoreUser(userID)
 	if err != nil {
@@ -3627,6 +3628,51 @@ func (s *State) SetUserGroups(
 	}
 
 	return c.Merge(s.policyChangeSince(genBefore)), nil
+}
+
+// syncSuspendedUsers publishes the stored set of suspended users to the
+// NodeStore, which rebuilds peer maps and route election before it returns.
+func (s *State) syncSuspendedUsers() error {
+	s.usersMu.Lock()
+	defer s.usersMu.Unlock()
+
+	suspended, err := hsdb.ListSuspendedUserIDs(s.db.DB)
+	if err != nil {
+		return err
+	}
+
+	s.nodeStore.SetSuspendedUsers(suspended)
+
+	return nil
+}
+
+// refreshNodeStoreUsers is [State.refreshNodeStoreUser] for several users,
+// in one NodeStore write, so a group change with many members waits for
+// one batch rather than one per member. Users that no longer exist are
+// skipped: deleting a user deletes their nodes first.
+func (s *State) refreshNodeStoreUsers(userIDs ...types.UserID) error {
+	updates := make(map[types.NodeID]UpdateNodeFunc)
+
+	for _, uid := range userIDs {
+		user, err := s.db.GetUserByID(uid)
+		if errors.Is(err, hsdb.ErrUserNotFound) {
+			continue
+		}
+
+		if err != nil {
+			return fmt.Errorf("reloading user %d: %w", uid, err)
+		}
+
+		for _, node := range s.nodeStore.ListNodesByUser(uid).All() {
+			updates[node.ID()] = func(n *types.Node) {
+				n.User = user.Clone()
+			}
+		}
+	}
+
+	s.nodeStore.UpdateNodes(updates)
+
+	return nil
 }
 
 // refreshNodeStoreUser replaces the copy of the user held by each of their

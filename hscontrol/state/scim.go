@@ -1,13 +1,14 @@
 package state
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	hsdb "github.com/juanfont/headscale/hscontrol/db"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/types/change"
+	"github.com/juanfont/headscale/hscontrol/util/zlog/zf"
+	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
 
@@ -204,14 +205,9 @@ func (s *State) DeleteSCIMUser(uid types.UserID) ([]change.Change, error) {
 	}
 
 	// The user is gone: forget their suspension too.
-	suspended, err := hsdb.ListSuspendedUserIDs(s.db.DB)
-	if err != nil {
-		return changes, err
-	}
+	err = s.syncSuspendedUsers()
 
-	s.nodeStore.SetSuspendedUsers(suspended)
-
-	return changes, nil
+	return changes, err
 }
 
 // FindUnlinkedSCIMUserByUserName returns the SCIM user, not yet linked to a
@@ -403,17 +399,21 @@ func (s *State) applyGroupMembershipChanges(users []types.UserID) (change.Change
 		return change.Change{}, nil
 	}
 
-	for _, uid := range users {
-		err := s.refreshNodeStoreUser(uid)
-		if err != nil && !errors.Is(err, hsdb.ErrUserNotFound) {
-			return change.Change{}, err
-		}
+	// Read before the NodeStore write below; see updatePolicyManagerNodes.
+	genBefore := s.polMan.NodesGeneration()
+
+	// Display only, as in [State.SetUserGroups]: it must not keep the policy
+	// update below from running.
+	err := s.refreshNodeStoreUsers(users...)
+	if err != nil {
+		log.Error().Err(err).Int(zf.UserCount, len(users)).
+			Msg("refreshing users' nodes after a SCIM group change")
 	}
 
 	c, err := s.updatePolicyManagerUsers()
 	if err != nil {
-		return change.Change{}, fmt.Errorf("updating policy manager after SCIM group change: %w", err)
+		return s.policyChangeSince(genBefore), fmt.Errorf("updating policy manager after SCIM group change: %w", err)
 	}
 
-	return c, nil
+	return c.Merge(s.policyChangeSince(genBefore)), nil
 }
