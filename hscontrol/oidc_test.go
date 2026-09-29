@@ -926,13 +926,13 @@ func TestOIDCPendingCallbackPreservesSSHVerdict(t *testing.T) {
 	require.True(t, ok)
 
 	principal := mockoidc.DefaultUser()
-	user, err := a.createOrUpdateUserFromClaim(&types.OIDCClaims{
+	user, _, err := a.createOrUpdateUserFromClaim(&types.OIDCClaims{
 		Iss:           b.idp.Issuer(),
 		Sub:           principal.Subject,
 		Username:      principal.PreferredUsername,
 		Email:         principal.Email,
 		EmailVerified: true,
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 
 	src := b.app.state.CreateNodeForTest(user, "oidc-ssh-source")

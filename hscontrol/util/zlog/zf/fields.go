@@ -63,6 +63,7 @@ const (
 	OldUser       = "old.user"
 	NewUser       = "new.user"
 	UserSuspended = "user.suspended"
+	UserEmail     = "user.email"
 )
 
 // Identity-provider group fields.
@@ -74,6 +75,11 @@ const (
 	OIDCGroupsDomain  = "oidc.groups.domain"
 	OIDCGroupsClaim   = "oidc.groups.claim"
 	OIDCSubject       = "oidc.subject"
+	OIDCIdentifier    = "oidc.identifier"
+	SCIMLinkClaim     = "scim.link_claim"
+	SCIMLinkBy        = "scim.link_by"
+
+	OIDCEmailVerifiedRequired = "oidc.email_verified_required"
 )
 
 // PreAuthKey fields.

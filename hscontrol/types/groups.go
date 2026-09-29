@@ -199,6 +199,20 @@ func GroupsFromClaims(claims map[string]any, claim string) ([]string, bool) {
 	}
 }
 
+// StringClaim returns the string value of claim in claims, looked up as
+// [GroupsFromClaims] does (a literal name first, then a dotted path), and
+// whether it is a non-empty string. Other value types are not converted.
+func StringClaim(claims map[string]any, claim string) (string, bool) {
+	val, ok := claims[claim]
+	if !ok {
+		val, ok = nestedClaim(claims, claim)
+	}
+
+	s, isString := val.(string)
+
+	return s, ok && isString && s != ""
+}
+
 func nestedClaim(claims map[string]any, path string) (any, bool) {
 	parts := strings.Split(path, ".")
 	if len(parts) < 2 {

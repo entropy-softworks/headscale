@@ -20,6 +20,7 @@ import (
 	hsstate "github.com/juanfont/headscale/hscontrol/state"
 	"github.com/juanfont/headscale/hscontrol/templates"
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/types/change"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/juanfont/headscale/hscontrol/util/zlog/zf"
 	"github.com/rs/zerolog/log"
@@ -58,6 +59,8 @@ var (
 		"authenticated principal does not match any allowed user",
 	)
 	errOIDCUnverifiedEmail = errors.New("authenticated principal has an unverified email")
+	errOIDCNotProvisioned  = errors.New("authenticated principal is not provisioned through SCIM")
+	errOIDCSCIMLinkLost    = errors.New("provisioned user is linked to another login")
 	errInvalidPKCEMethod   = errors.New("invalid pkce.method")
 )
 
@@ -376,33 +379,23 @@ func (a *AuthProviderOIDC) OIDCCallbackHandler(
 		return
 	}
 
-	idpGroups := a.loginGroups(claims.Sub, idToken, userinfo, userinfoValid)
+	idClaims, infoClaims := loginClaims(idToken, userinfo, userinfoValid)
+	idpGroups := a.loginGroups(claims.Sub, idClaims, infoClaims)
 
-	user, err := a.createOrUpdateUserFromClaim(&claims)
+	user, linkChanges, err := a.createOrUpdateUserFromClaim(&claims, idClaims, infoClaims)
 	if err != nil {
-		httpUserError(writer, NewHTTPError(
-			http.StatusInternalServerError,
-			"could not create or update user",
-			err,
-		))
+		if _, ok := errors.AsType[HTTPError](err); !ok {
+			err = NewHTTPError(http.StatusInternalServerError, "could not create or update user", err)
+		}
+
+		httpUserError(writer, err)
 
 		return
 	}
 
-	// A suspended user may neither register nodes nor approve SSH sessions.
-	if user.IsSuspended() {
-		httpUserError(writer, NewHTTPError(http.StatusForbidden, "your account is suspended", hsstate.ErrUserSuspended))
-
-		return
-	}
-
-	err = a.syncLoginGroups(user, idpGroups)
+	err = a.admitLogin(user, linkChanges, idpGroups)
 	if err != nil {
-		httpUserError(writer, NewHTTPError(
-			http.StatusInternalServerError,
-			"could not update user groups",
-			err,
-		))
+		httpUserError(writer, err)
 
 		return
 	}
@@ -713,25 +706,58 @@ func (a *AuthProviderOIDC) addAuthInfoToState(state string, info AuthInfo) bool 
 	return true
 }
 
-// loginGroups returns the qualified groups a login asserts, or nil when group
-// sync is disabled. Userinfo is only consulted when it belongs to the same
-// subject as the ID token.
-func (a *AuthProviderOIDC) loginGroups(
-	sub string,
+// loginClaims decodes a login's ID token and userinfo claims into generic
+// maps. Userinfo is only used when it belongs to the same subject as the ID
+// token; otherwise its map is nil.
+func loginClaims(
 	idToken *oidc.IDToken,
 	userinfo *oidc.UserInfo,
 	userinfoValid bool,
-) []string {
-	if !a.cfg.Groups.Enabled {
-		return nil
-	}
-
+) (map[string]any, map[string]any) {
 	var infoClaims map[string]any
 	if userinfoValid {
 		infoClaims = rawClaims(userinfo.Claims)
 	}
 
-	return a.groupsFromClaims(sub, rawClaims(idToken.Claims), infoClaims)
+	return rawClaims(idToken.Claims), infoClaims
+}
+
+// loginGroups returns the qualified groups a login asserts, or nil when group
+// sync is disabled.
+func (a *AuthProviderOIDC) loginGroups(sub string, idClaims, infoClaims map[string]any) []string {
+	if !a.cfg.Groups.Enabled {
+		return nil
+	}
+
+	return a.groupsFromClaims(sub, idClaims, infoClaims)
+}
+
+// admitLogin finishes a login for user once it has been created or updated:
+// it broadcasts what linking a provisioned user changed, refuses a suspended
+// user, and syncs the login's groups. Linking can change what the policy
+// resolves (the login now owns the user's email), and the user may already own
+// nodes registered with a pre-auth key; as for groups, only the policy delta
+// is sent, never a user change ahead of registration (#2888).
+func (a *AuthProviderOIDC) admitLogin(
+	user *types.User,
+	linkChanges []change.Change,
+	groups []string,
+) error {
+	if len(linkChanges) > 0 {
+		a.h.Change(linkChanges...)
+	}
+
+	// A suspended user may neither register nodes nor approve SSH sessions.
+	if user.IsSuspended() {
+		return NewHTTPError(http.StatusForbidden, "your account is suspended", hsstate.ErrUserSuspended)
+	}
+
+	err := a.syncLoginGroups(user, groups)
+	if err != nil {
+		return NewHTTPError(http.StatusInternalServerError, "could not update user groups", err)
+	}
+
+	return nil
 }
 
 // syncLoginGroups makes groups the user's OIDC memberships and broadcasts the
@@ -853,23 +879,65 @@ func (a *AuthProviderOIDC) getAuthInfoFromState(state string) *AuthInfo {
 	return &authInfo
 }
 
+// createOrUpdateUserFromClaim returns the user the login is for, created or
+// updated from its claims. idClaims and infoClaims are the raw ID token and
+// userinfo claims (infoClaims may be nil), read when linking by a custom
+// claim.
+//
+// With SCIM enabled, a login with no user of its own is first matched to an
+// unlinked provisioned user (see [AuthProviderOIDC.linkSCIMUser]), which it
+// is linked to and then updates like any returning login. With
+// scim.require_provisioning, a login matching no provisioned user, or
+// belonging to a user SCIM does not manage, is refused with a 403 instead
+// of creating or updating a user.
+//
+// The changes returned are the policy deltas of a link, which the caller
+// broadcasts; creating or updating a user returns none, the registration or
+// SSH check that follows announcing what changed (#2888). A refused or
+// failed login returns an [HTTPError].
 func (a *AuthProviderOIDC) createOrUpdateUserFromClaim(
 	claims *types.OIDCClaims,
-) (*types.User, error) {
+	idClaims, infoClaims map[string]any,
+) (*types.User, []change.Change, error) {
 	var (
 		user    *types.User
 		err     error
 		newUser bool
+		changes []change.Change
 	)
 
 	user, err = a.h.state.GetUserByOIDCIdentifier(claims.Identifier())
 	if err != nil && !errors.Is(err, db.ErrUserNotFound) {
-		return nil, fmt.Errorf("creating or updating user: %w", err)
+		return nil, nil, fmt.Errorf("creating or updating user: %w", err)
+	}
+
+	scim := a.h.cfg.SCIM
+
+	if user == nil && scim.Enabled {
+		var c change.Change
+
+		user, c, err = a.linkSCIMUser(claims, idClaims, infoClaims)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if !c.IsEmpty() {
+			changes = append(changes, c)
+		}
+	}
+
+	if scim.Enabled && scim.RequireProvisioning && !user.IsSCIMProvisioned() {
+		e := log.Warn().Str(zf.OIDCIdentifier, claims.Identifier())
+		if user != nil {
+			e = e.EmbedObject(user)
+		}
+
+		e.Msg("refusing OIDC login of a user not provisioned through SCIM")
+
+		return nil, nil, errNotProvisioned
 	}
 
 	// if the user is still not found, create a new empty user.
-	// TODO(kradalby): This context is not inherited from the request, which is probably not ideal.
-	// However, we need a context to use the OIDC provider.
 	if user == nil {
 		newUser = true
 		user = &types.User{}
@@ -880,19 +948,208 @@ func (a *AuthProviderOIDC) createOrUpdateUserFromClaim(
 	if newUser {
 		user, _, err = a.h.state.CreateUser(*user)
 		if err != nil {
-			return nil, fmt.Errorf("creating user: %w", err)
+			return nil, nil, fmt.Errorf("creating user: %w", err)
 		}
-	} else {
-		_, _, err = a.h.state.UpdateUser(types.UserID(user.ID), func(u *types.User) error {
-			*u = *user
-			return nil
-		})
-		if err != nil {
-			return nil, fmt.Errorf("updating user: %w", err)
+
+		return user, nil, nil
+	}
+
+	_, c, err := a.h.state.UpdateUser(types.UserID(user.ID), func(u *types.User) error {
+		*u = *user
+		return nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("updating user: %w", err)
+	}
+
+	// Only a link's own update is broadcast; see above.
+	if len(changes) > 0 && !c.IsEmpty() {
+		changes = append(changes, c)
+	}
+
+	return user, changes, nil
+}
+
+// errNotProvisioned refuses a login under scim.require_provisioning.
+var errNotProvisioned = newHTTPUserError(
+	http.StatusForbidden,
+	"user is not provisioned through SCIM",
+	"Your account has not been provisioned for this tailnet. "+
+		"Ask your administrator to assign you to Headscale in your identity provider.",
+	errOIDCNotProvisioned,
+)
+
+// errSCIMLinkLost refuses a login whose provisioned user another login
+// linked first. It is a plain 403, like any refused login, so the page does
+// not tell whoever logged in that a provisioned account exists; the server
+// logs the detail.
+var errSCIMLinkLost = NewHTTPError(
+	http.StatusForbidden,
+	"provisioned user was linked to another login",
+	errOIDCSCIMLinkLost,
+)
+
+// linkSCIMUser links the login to the unlinked SCIM-provisioned user it
+// matches, if any, and returns that user (nil when none matches) with the
+// change to broadcast. How a login matches is set by scim.link_by:
+//
+//   - "email": the login's email, only if the provider asserts it verified
+//     (email_verified true for that address; see [mergeEmailClaims])
+//     whatever email_verified_required says, equals the SCIM userName with ASCII case folding ([sameEmail]).
+//     Failing that, it equals the SCIM email of exactly one unlinked user:
+//     identity providers often provision a userName that is not the login's
+//     email (Entra's UPN against its mail claim), and both values are the
+//     provider's own assertions about the person.
+//   - "external_id": the string value of scim.link_claim, read from the ID
+//     token and else from userinfo (a literal claim name first, then a
+//     dotted path, as for groups), equals the SCIM externalId exactly.
+//
+// If another login links the user between the caller's lookup and the
+// link, the user is looked up again by the login's identifier: a concurrent
+// login of the same identity (a double submit) then proceeds with the user
+// the other linked, while a different identity is refused with a 403 (or,
+// if it finds no candidate left, handled as any unmatched login).
+func (a *AuthProviderOIDC) linkSCIMUser(
+	claims *types.OIDCClaims,
+	idClaims, infoClaims map[string]any,
+) (*types.User, change.Change, error) {
+	identifier := claims.Identifier()
+
+	candidate, err := a.findSCIMUserForLogin(claims, idClaims, infoClaims)
+	if err != nil && !errors.Is(err, db.ErrUserNotFound) {
+		return nil, change.Change{}, err
+	}
+
+	if candidate == nil {
+		// A concurrent login of the same identity may have linked the
+		// user since this one looked it up.
+		existing, err := a.h.state.GetUserByOIDCIdentifier(identifier)
+		if err != nil && !errors.Is(err, db.ErrUserNotFound) {
+			return nil, change.Change{}, fmt.Errorf("looking up OIDC user: %w", err)
+		}
+
+		return existing, change.Change{}, nil
+	}
+
+	user, c, err := a.h.state.LinkSCIMUser(types.UserID(candidate.ID), identifier)
+	switch {
+	case err == nil:
+		log.Info().EmbedObject(user).Str(zf.OIDCIdentifier, identifier).
+			Msg("linked OIDC login to SCIM-provisioned user")
+
+		return user, c, nil
+	case errors.Is(err, db.ErrSCIMUserLinked), errors.Is(err, db.ErrSCIMConflict):
+		existing, lerr := a.h.state.GetUserByOIDCIdentifier(identifier)
+		if lerr == nil {
+			return existing, change.Change{}, nil
+		}
+
+		log.Warn().Err(err).Uint(zf.UserID, candidate.ID).Str(zf.OIDCIdentifier, identifier).
+			Msg("SCIM user was linked to another OIDC login first")
+
+		return nil, change.Change{}, errSCIMLinkLost
+	default:
+		return nil, change.Change{}, fmt.Errorf("linking SCIM user %d: %w", candidate.ID, err)
+	}
+}
+
+// findSCIMUserForLogin returns the unlinked SCIM user the login matches
+// under scim.link_by (see [AuthProviderOIDC.linkSCIMUser]), or
+// [db.ErrUserNotFound].
+func (a *AuthProviderOIDC) findSCIMUserForLogin(
+	claims *types.OIDCClaims,
+	idClaims, infoClaims map[string]any,
+) (*types.User, error) {
+	scim := a.h.cfg.SCIM
+
+	var (
+		user *types.User
+		err  error
+	)
+
+	switch scim.LinkBy {
+	case types.SCIMLinkByExternalID:
+		value, ok := types.StringClaim(idClaims, scim.LinkClaim)
+		if !ok {
+			value, ok = types.StringClaim(infoClaims, scim.LinkClaim)
+		}
+
+		if !ok {
+			log.Debug().Str(zf.SCIMLinkClaim, scim.LinkClaim).
+				Msg("OIDC login carries no string link claim; not linking a SCIM user")
+
+			return nil, db.ErrUserNotFound
+		}
+
+		user, err = a.h.state.FindUnlinkedSCIMUserByExternalID(value)
+	default:
+		// Linking always needs the provider to vouch for the email, even
+		// when email_verified_required is off for storing it: an
+		// unverified email would hand the account to whoever typed it.
+		email := claims.TrustedEmail(true)
+		if email == "" {
+			return nil, db.ErrUserNotFound
+		}
+
+		user, err = a.h.state.FindUnlinkedSCIMUserByUserName(email)
+		if err == nil && !sameEmail(user.SCIMUserName.String, email) {
+			user, err = nil, db.ErrUserNotFound
+		}
+
+		if errors.Is(err, db.ErrUserNotFound) {
+			user, err = a.findSCIMUserBySCIMEmail(email)
 		}
 	}
 
-	return user, nil
+	if err != nil && !errors.Is(err, db.ErrUserNotFound) {
+		return nil, fmt.Errorf("finding SCIM user for OIDC login: %w", err)
+	}
+
+	return user, err
+}
+
+// scimEmailCandidates bounds the SCIM users fetched by email; more matches
+// than that are ambiguous anyway.
+const scimEmailCandidates = 8
+
+// findSCIMUserBySCIMEmail returns the one unlinked SCIM user whose SCIM
+// email is email (see [sameEmail]), or [db.ErrUserNotFound] when there is
+// none or the match is ambiguous.
+func (a *AuthProviderOIDC) findSCIMUserBySCIMEmail(email string) (*types.User, error) {
+	users, err := a.h.state.FindUnlinkedSCIMUsersByEmail(email, scimEmailCandidates)
+	if err != nil {
+		return nil, err
+	}
+
+	var matches []*types.User
+
+	for i := range users {
+		if sameEmail(users[i].SCIMEmail, email) {
+			matches = append(matches, &users[i])
+		}
+	}
+
+	switch {
+	case len(matches) == 1 && len(users) < scimEmailCandidates:
+		return matches[0], nil
+	case len(matches) == 0:
+		return nil, db.ErrUserNotFound
+	default:
+		log.Warn().Str(zf.UserEmail, email).Int(zf.UserCount, len(matches)).
+			Msg("several unlinked SCIM users have the login's email; not linking any")
+
+		return nil, db.ErrUserNotFound
+	}
+}
+
+// sameEmail reports whether two emails are equal with ASCII case folding
+// only. The database lookups fold with strings.ToLower or SQL LOWER, which
+// map lookalikes such as the Kelvin sign 'K' (U+212A) or the dotted 'İ' to
+// ASCII letters; linking re-checks their candidates here, so an address
+// spelled with a lookalike never claims the account of the ASCII one, or
+// the reverse.
+func sameEmail(a, b string) bool {
+	return types.FoldGroupName(a) == types.FoldGroupName(b)
 }
 
 // registerConfirmCSRFCookie is the cookie name used to bind the

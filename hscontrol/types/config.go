@@ -19,6 +19,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	hsdns "github.com/juanfont/headscale/hscontrol/dns"
 	"github.com/juanfont/headscale/hscontrol/util"
+	"github.com/juanfont/headscale/hscontrol/util/zlog/zf"
 	"github.com/prometheus/common/model"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -421,13 +422,23 @@ type SCIMConfig struct {
 	GroupsDomain string
 
 	// LinkBy selects how a provisioned user is matched to their first OIDC
-	// login: SCIMLinkByEmail (the login's verified email equals the SCIM
-	// userName) or SCIMLinkByExternalID (the LinkClaim claim equals the SCIM
-	// externalId).
+	// login: SCIMLinkByEmail (the login's email equals the SCIM userName, or
+	// failing that the SCIM email of exactly one unlinked user, with ASCII
+	// case folding) or SCIMLinkByExternalID (the LinkClaim claim equals the
+	// SCIM externalId exactly). By email, only an email the identity
+	// provider asserts verified (email_verified true, from the same ID token
+	// or userinfo response as the email) is used, whatever
+	// oidc.email_verified_required says.
 	LinkBy string
 
 	// LinkClaim is the OIDC claim compared with externalId when LinkBy is
-	// SCIMLinkByExternalID, such as sub or Entra ID's oid.
+	// SCIMLinkByExternalID. It must be an identifier the identity provider
+	// never reassigns and users cannot change, never a name or email, and
+	// the provider's SCIM client must send the same value as externalId.
+	// Examples: Entra ID's oid (map objectId to externalId; Entra's default
+	// mapping sends mailNickname), Okta's sub (the user id), Authentik's sub
+	// or uid, Access's sub. It is read from the ID token, then from
+	// userinfo; a literal claim name is tried before a dotted path.
 	LinkClaim string
 
 	// AdoptExistingUsers lets a SCIM create take over an existing OIDC user
@@ -435,8 +446,17 @@ type SCIMConfig struct {
 	// it as a conflict.
 	AdoptExistingUsers bool
 
-	// RequireProvisioning refuses OIDC logins from users the identity
-	// provider has not provisioned through SCIM.
+	// RequireProvisioning refuses (403) OIDC logins from users the identity
+	// provider has not provisioned through SCIM: a login matching no
+	// provisioned user creates none, and users created by OIDC logins
+	// before, and not since adopted by SCIM, can no longer log in. Their
+	// existing nodes are not affected.
+	//
+	// It is what makes a SCIM deprovisioning stick when the identity
+	// provider does not itself block the user's sign-in to Headscale's OIDC
+	// client: without it, a deleted user's next login creates a new,
+	// unprovisioned user. It governs OIDC logins only: registrations with a
+	// pre-auth key are unaffected.
 	RequireProvisioning bool
 }
 
@@ -617,6 +637,23 @@ func validateSCIMConfig() error {
 	}
 
 	return nil
+}
+
+// warnSCIMUnverifiedEmails warns when SCIM links logins by email while
+// OIDC stores unverified emails: linking still ignores them, which an admin
+// relying on email_verified_required=false may not expect.
+func warnSCIMUnverifiedEmails() {
+	if viper.GetString("scim.link_by") != SCIMLinkByEmail || viper.GetBool("oidc.email_verified_required") {
+		return
+	}
+
+	log.Warn().
+		Str(zf.SCIMLinkBy, SCIMLinkByEmail).
+		Bool(zf.OIDCEmailVerifiedRequired, false).
+		Msg("SCIM never links a login to a provisioned user by an unverified email, whatever " +
+			"oidc.email_verified_required says: logins whose identity provider does not assert " +
+			"email_verified are not linked. Prefer scim.link_by: external_id with an immutable " +
+			"claim as scim.link_claim (Entra ID: oid)")
 }
 
 // scimGroupsDomain returns scim.groups_domain, defaulting to
@@ -907,6 +944,8 @@ func validateServerConfigInto(v *configValidator) {
 				},
 			})
 		}
+
+		warnSCIMUnverifiedEmails()
 	}
 
 	if viper.GetBool("oidc.groups.enabled") {

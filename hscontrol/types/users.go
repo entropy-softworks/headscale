@@ -398,6 +398,24 @@ type OIDCClaims struct {
 	Username          string              `json:"preferred_username,omitempty"`
 }
 
+// TrustedEmail returns the email the claims assert if a login may be
+// trusted with it: the provider verified it, or emailVerifiedRequired is
+// false, and it parses as an address. Otherwise it returns "". It is the
+// email [User.FromClaim] stores, and the only one a login may be matched to
+// a provisioned user by.
+func (c *OIDCClaims) TrustedEmail(emailVerifiedRequired bool) string {
+	if !c.EmailVerified && FlexibleBoolean(emailVerifiedRequired) {
+		return ""
+	}
+
+	_, err := mail.ParseAddress(c.Email)
+	if err != nil {
+		return ""
+	}
+
+	return c.Email
+}
+
 // Identifier returns a unique identifier string combining the [OIDCClaims.Iss] and [OIDCClaims.Sub] claims.
 // The format depends on whether [OIDCClaims.Iss] is a URL or not:
 // - For URLs: Joins the URL and sub path (e.g., "https://example.com/sub")
@@ -518,11 +536,8 @@ func (u *User) FromClaim(claims *OIDCClaims, emailVerifiedRequired bool) {
 		log.Debug().Caller().Err(err).Msgf("username %s is not valid", claims.Username)
 	}
 
-	if claims.EmailVerified || !FlexibleBoolean(emailVerifiedRequired) {
-		_, err = mail.ParseAddress(claims.Email)
-		if err == nil {
-			u.Email = claims.Email
-		}
+	if email := claims.TrustedEmail(emailVerifiedRequired); email != "" {
+		u.Email = email
 	}
 
 	// Get provider identifier
