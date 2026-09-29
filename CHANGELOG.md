@@ -112,6 +112,44 @@ disabled by default.
 
 [#3216](https://github.com/juanfont/headscale/pull/3216)
 
+### User suspension
+
+Users can now be suspended, with Tailscale's semantics: a suspended user's
+untagged nodes stay connected but have no peers, are no one's peer, serve no
+routes, and receive an empty packet filter and SSH policy. The user can neither
+log in, register nodes (not even with their pre-auth keys), nor approve SSH
+check-mode sessions. Tagged nodes are unaffected. Nodes, keys and group
+memberships are kept, so restoring a user brings everything back without a new
+login. `headscale users suspend` and `headscale users restore` manage it, as do
+the Tailscale-compatible `POST /api/v2/users/{id}/suspend` and `/restore`
+endpoints (scope `users`).
+
+### SCIM 2.0 provisioning
+
+With `scim.enabled`, Headscale serves a SCIM 2.0 endpoint at `/scim/v2`, through
+which an identity provider such as Microsoft Entra ID, Okta or Authentik
+creates, updates, suspends and deletes users and pushes groups as they change,
+without waiting for a login. Deactivating a user at the identity provider
+suspends them at once; deleting them deletes their nodes too. Provisioned
+groups are referenced in the policy as `group:<displayName>@<domain>`, or by
+the alias `group:<externalId>@<domain>`, which survives renames. SCIM alone
+grants the groups it manages, even when OIDC group sync is enabled.
+
+SCIM requires OIDC. A user's first login is linked to their provisioned user by
+verified email or, with `scim.link_by: external_id`, by an immutable claim such
+as Entra ID's `oid`. `scim.require_provisioning` refuses logins of users the
+identity provider has not provisioned, so a deletion sticks, and
+`scim.adopt_existing_users` (off by default) lets an existing tailnet be
+brought under SCIM without duplicating its users. See
+[the SCIM docs](https://headscale.net/stable/ref/scim/).
+
+The identity provider authenticates with a SCIM token from
+`headscale scim tokens create`, or with an OAuth client holding the new `scim`
+scope. Admin API keys are refused by the SCIM endpoint, and the scope is
+explicit-only: `all` does not grant it. `headscale scim users list` and
+`headscale scim groups list` show what was provisioned, and
+`headscale scim groups release` hands a group back to OIDC group sync.
+
 ### BREAKING
 
 #### Database
@@ -153,6 +191,10 @@ disabled by default.
 
 - Policy group references whose name contains `@` now parse as groups rather than as usernames that matched no one [#3216](https://github.com/juanfont/headscale/pull/3216)
 - Changes to users that only affect per-node grants (`via`, `autogroup:self`), such as a rename, now update those nodes' filters [#3216](https://github.com/juanfont/headscale/pull/3216)
+- v1 API users gain `scimManaged` and `suspended` fields, and v2 API users report `status: suspended` while suspended; `headscale users list` shows both
+- New v1 endpoints manage SCIM tokens (`/api/v1/scim/token`), list SCIM users and groups (`/api/v1/scim/user`, `/api/v1/scim/group`) and release SCIM groups (`/api/v1/scim/group/{id}/release`)
+- While SCIM is enabled, users it manages cannot be renamed, destroyed or restored through the CLI or API (409); change them at the identity provider
+- Deleting an OAuth client with an OAuth token now requires the token to hold every scope of that client, and clients holding the `scim` scope are only visible to tokens that hold it
 - PostgreSQL connection settings are assembled into a `postgres://` URL with proper escaping, so a password (or host, user, database name) containing spaces, quotes or other reserved characters no longer truncates the DSN [#3477](https://github.com/juanfont/headscale/pull/3477)
 - Fix SSH policy `acceptEnv` having no effect, so allowed environment variables reach SSH sessions. Upgrade SSH destination nodes to Tailscale v1.104.4 or newer before using `acceptEnv`, because older clients can disclose forwarded values [#3569](https://github.com/juanfont/headscale/pull/3569)
 - Expiring or deleting a non-existent pre-auth key now returns an error instead of silently succeeding [#3324](https://github.com/juanfont/headscale/pull/3324)
