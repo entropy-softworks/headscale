@@ -3467,6 +3467,13 @@ func (s *State) setUserSuspended(userID types.UserID, at time.Time) (change.Chan
 		return change.Change{}, nil
 	}
 
+	return s.applySuspensionChange(userID, !at.IsZero())
+}
+
+// applySuspensionChange brings the NodeStore and policy manager up to date
+// after the user's suspension changed in the database (to suspended), and
+// returns the change to broadcast.
+func (s *State) applySuspensionChange(userID types.UserID, suspendedNow bool) (change.Change, error) {
 	suspended, err := hsdb.ListSuspendedUserIDs(s.db.DB)
 	if err != nil {
 		return change.Change{}, err
@@ -3480,7 +3487,7 @@ func (s *State) setUserSuspended(userID types.UserID, at time.Time) (change.Chan
 		return change.Change{}, err
 	}
 
-	if !at.IsZero() {
+	if suspendedNow {
 		s.clearSSHCheckAuthForUser(userID)
 	}
 
@@ -3491,7 +3498,7 @@ func (s *State) setUserSuspended(userID types.UserID, at time.Time) (change.Chan
 
 	log.Info().
 		Uint64(zf.UserID, uint64(userID)).
-		Bool(zf.UserSuspended, !at.IsZero()).
+		Bool(zf.UserSuspended, suspendedNow).
 		Msg("user suspension changed")
 
 	// Suspension changes no policy hash, so the policy manager reports no
@@ -3538,11 +3545,36 @@ func pruneOIDCGroupMemberships(db *hsdb.HSDatabase, oidc types.OIDCConfig) error
 		keepDomain = cfg.Domain
 	}
 
+	var purged, orphans int64
+
 	removed, err := hsdb.Write(db.DB, func(tx *gorm.DB) (int64, error) {
-		return hsdb.PruneGroupMemberships(tx, types.GroupSourceOIDC, keepDomain)
+		n, err := hsdb.PruneGroupMemberships(tx, types.GroupSourceOIDC, keepDomain)
+		if err != nil {
+			return 0, err
+		}
+
+		// SCIM alone grants the groups it manages.
+		purged, err = hsdb.PurgeNonSCIMMembershipsOfSCIMGroups(tx)
+		if err != nil {
+			return 0, err
+		}
+
+		// Groups left without members grant nothing; drop them so the
+		// table does not accumulate every group ever asserted.
+		orphans, err = hsdb.DeleteOrphanedOIDCGroups(tx)
+
+		return n, err
 	})
 	if err != nil {
 		return fmt.Errorf("pruning OIDC group memberships: %w", err)
+	}
+
+	if purged > 0 {
+		log.Info().Int64(zf.MembershipsPurged, purged).Msg("removed non-SCIM memberships of SCIM-managed groups")
+	}
+
+	if orphans > 0 {
+		log.Debug().Int64(zf.GroupsDeleted, orphans).Msg("deleted OIDC groups without members")
 	}
 
 	if removed > 0 {

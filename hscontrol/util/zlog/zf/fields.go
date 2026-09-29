@@ -69,6 +69,7 @@ const (
 const (
 	GroupName         = "group.name"
 	GroupMemberships  = "group.memberships"
+	GroupsDeleted     = "groups.deleted"
 	OIDCGroupsEnabled = "oidc.groups.enabled"
 	OIDCGroupsDomain  = "oidc.groups.domain"
 	OIDCGroupsClaim   = "oidc.groups.claim"
