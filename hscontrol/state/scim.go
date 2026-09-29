@@ -221,6 +221,13 @@ func (s *State) FindUnlinkedSCIMUserByUserName(userName string) (*types.User, er
 	return hsdb.FindUnlinkedSCIMUserByUserName(s.db.DB, userName)
 }
 
+// FindUnlinkedSCIMUsersByEmail returns up to limit SCIM users, not yet
+// linked to a login, whose SCIM email is email; see
+// [hsdb.FindUnlinkedSCIMUsersByEmail].
+func (s *State) FindUnlinkedSCIMUsersByEmail(email string, limit int) ([]types.User, error) {
+	return hsdb.FindUnlinkedSCIMUsersByEmail(s.db.DB, email, limit)
+}
+
 // FindUnlinkedSCIMUserByExternalID returns the SCIM user, not yet linked to a
 // login, whose externalId is externalID, or [hsdb.ErrUserNotFound].
 func (s *State) FindUnlinkedSCIMUserByExternalID(externalID string) (*types.User, error) {

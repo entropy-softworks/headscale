@@ -588,6 +588,26 @@ func FindUnlinkedSCIMUserByUserName(tx *gorm.DB, userName string) (*types.User, 
 	return firstSCIMUser(tx, SCIMUserFilter{UserName: userName}, "users.provider_identifier IS NULL")
 }
 
+// FindUnlinkedSCIMUsersByEmail returns up to limit SCIM users not yet
+// linked to a login whose SCIM email equals email case-insensitively (see
+// [SCIMUserFilter]), ordered by id. Unlike userName, the SCIM email is not
+// unique, so a caller linking by it must refuse an ambiguous match.
+func FindUnlinkedSCIMUsersByEmail(tx *gorm.DB, email string, limit int) ([]types.User, error) {
+	if email == "" {
+		return nil, nil
+	}
+
+	var users []types.User
+
+	err := preloadUserGroups(tx, "").Scopes(SCIMUserFilter{Email: email}.scope).
+		Where("users.provider_identifier IS NULL").Order("id").Limit(limit).Find(&users).Error
+	if err != nil {
+		return nil, fmt.Errorf("finding unlinked SCIM users by email: %w", err)
+	}
+
+	return users, nil
+}
+
 // FindUnlinkedSCIMUserByExternalID is [FindUnlinkedSCIMUserByUserName] for
 // deployments that link by externalId: the login's value of the configured
 // claim is compared exactly with the externalId.
@@ -632,13 +652,23 @@ func LinkSCIMUser(tx *gorm.DB, uid types.UserID, providerIdentifier string) (*ty
 		return nil, fmt.Errorf("%w: provider identifier %q belongs to another user", ErrSCIMConflict, providerIdentifier)
 	}
 
-	err = tx.Model(&types.User{}).Where("id = ?", uint(uid)).UpdateColumns(map[string]any{
-		"provider_identifier": providerIdentifier,
-		"provider":            util.RegisterMethodOIDC,
-		"updated_at":          time.Now().UTC(),
-	}).Error
-	if err != nil {
-		return nil, writeError(tx, err, fmt.Sprintf("linking SCIM user %d", uid))
+	// The IS NULL condition makes the link a compare-and-set: of two logins
+	// linking the user concurrently, the one whose update finds it already
+	// linked changes nothing and gets ErrSCIMUserLinked, rather than
+	// overwriting the winner's identifier.
+	res := tx.Model(&types.User{}).
+		Where("id = ? AND provider_identifier IS NULL", uint(uid)).
+		UpdateColumns(map[string]any{
+			"provider_identifier": providerIdentifier,
+			"provider":            util.RegisterMethodOIDC,
+			"updated_at":          time.Now().UTC(),
+		})
+	if res.Error != nil {
+		return nil, writeError(tx, res.Error, fmt.Sprintf("linking SCIM user %d", uid))
+	}
+
+	if res.RowsAffected == 0 {
+		return nil, fmt.Errorf("%w: user %d", ErrSCIMUserLinked, uid)
 	}
 
 	return GetUserByID(tx, uid)

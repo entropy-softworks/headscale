@@ -3,7 +3,10 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/juanfont/headscale/hscontrol/types"
@@ -636,6 +639,97 @@ func TestLinkSCIMUser(t *testing.T) {
 			_, err := link(tt.uid, tt.pid)
 			require.ErrorIs(t, err, tt.wantErr, tt.name)
 		}
+	})
+}
+
+// TestLinkSCIMUserConcurrent races logins with distinct identities to link
+// the same SCIM user: exactly one wins, the others get ErrSCIMUserLinked,
+// and the stored identifier is the winner's. Without the compare-and-set
+// update, Postgres' read committed lets several see the user unlinked and
+// the last writer silently takes it over.
+func TestLinkSCIMUserConcurrent(t *testing.T) {
+	groupsTestDBs(t, func(t *testing.T, db *HSDatabase) {
+		t.Helper()
+
+		erin := mustSCIMUser(t, db, "erin@example.com", "")
+
+		const logins = 8
+
+		var (
+			wg      sync.WaitGroup
+			winners atomic.Int32
+			winner  atomic.Value
+			errs    = make([]error, logins)
+		)
+
+		for i := range logins {
+			wg.Go(func() {
+				pid := fmt.Sprintf("https://idp.example.com/erin-%d", i)
+
+				_, err := Write(db.DB, func(tx *gorm.DB) (*types.User, error) {
+					return LinkSCIMUser(tx, types.UserID(erin.ID), pid)
+				})
+				if err == nil {
+					winners.Add(1)
+					winner.Store(pid)
+				}
+
+				errs[i] = err
+			})
+		}
+
+		wg.Wait()
+
+		require.Equal(t, int32(1), winners.Load(), "exactly one login may link the user")
+
+		for _, err := range errs {
+			if err != nil {
+				require.ErrorIs(t, err, ErrSCIMUserLinked)
+			}
+		}
+
+		got, err := db.GetUserByID(types.UserID(erin.ID))
+		require.NoError(t, err)
+		assert.Equal(t, winner.Load(), got.ProviderIdentifier.String, "the winner's identifier is kept")
+	})
+}
+
+func TestFindUnlinkedSCIMUsersByEmail(t *testing.T) {
+	groupsTestDBs(t, func(t *testing.T, db *HSDatabase) {
+		t.Helper()
+
+		// Unlinked SCIM users cannot share an email (it is also their core
+		// email, which no SCIM write duplicates), so an ambiguous match can
+		// only arise from data written outside SCIM; callers still guard.
+		for _, attrs := range []types.SCIMUserAttributes{
+			{UserName: "alice", Email: "Alice@Example.com"},
+			{UserName: "bob", Email: "bob@example.com"},
+		} {
+			_, _, err := createSCIMUser(t, db, attrs)
+			require.NoError(t, err)
+		}
+
+		find := func(email string) []types.User {
+			users, err := Read(db.DB, func(rx *gorm.DB) ([]types.User, error) {
+				return FindUnlinkedSCIMUsersByEmail(rx, email, 2)
+			})
+			require.NoError(t, err)
+
+			return users
+		}
+
+		alice := find("alice@example.com")
+		require.Len(t, alice, 1, "the SCIM email compares case-insensitively")
+		assert.Equal(t, "alice", alice[0].SCIMUserName.String)
+		assert.Len(t, find("bob@example.com"), 1)
+		assert.Empty(t, find(""))
+		assert.Empty(t, find("nobody@example.com"))
+
+		_, err := Write(db.DB, func(tx *gorm.DB) (*types.User, error) {
+			return LinkSCIMUser(tx, types.UserID(alice[0].ID), "https://idp.example.com/alice")
+		})
+		require.NoError(t, err)
+		assert.Empty(t, find("alice@example.com"), "a linked user is no longer a candidate")
 	})
 }
 

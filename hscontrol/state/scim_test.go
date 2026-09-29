@@ -2,7 +2,9 @@ package state
 
 import (
 	"database/sql"
+	"fmt"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/juanfont/headscale/hscontrol/db"
@@ -165,6 +167,48 @@ func TestLinkSCIMUser(t *testing.T) {
 
 	_, _, err = s.LinkSCIMUser(types.UserID(user.ID), "https://idp.example.com/erin2")
 	require.ErrorIs(t, err, db.ErrSCIMUserLinked)
+}
+
+// TestLinkSCIMUserConcurrent races logins linking one SCIM user through
+// State: one wins and the others see ErrSCIMUserLinked, so an OIDC callback
+// losing the race never overwrites the winner's identifier.
+func TestLinkSCIMUserConcurrent(t *testing.T) {
+	s := scimTestState(t).s
+
+	user, _, err := s.CreateSCIMUser(types.SCIMUserAttributes{UserName: "erin@example.com", Active: true}, true)
+	require.NoError(t, err)
+
+	const logins = 8
+
+	var wg sync.WaitGroup
+
+	errs := make([]error, logins)
+	for i := range logins {
+		wg.Go(func() {
+			_, _, errs[i] = s.LinkSCIMUser(types.UserID(user.ID), fmt.Sprintf("https://idp.example.com/erin-%d", i))
+		})
+	}
+
+	wg.Wait()
+
+	var winner string
+
+	for i, err := range errs {
+		if err == nil {
+			require.Empty(t, winner, "only one login may link the user")
+			winner = fmt.Sprintf("https://idp.example.com/erin-%d", i)
+
+			continue
+		}
+
+		require.ErrorIs(t, err, db.ErrSCIMUserLinked)
+	}
+
+	require.NotEmpty(t, winner)
+
+	byLogin, err := s.GetUserByOIDCIdentifier(winner)
+	require.NoError(t, err)
+	assert.Equal(t, user.ID, byLogin.ID)
 }
 
 func TestDeleteSCIMUserDeletesNodesAndKeys(t *testing.T) {
