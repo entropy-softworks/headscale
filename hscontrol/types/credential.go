@@ -12,20 +12,22 @@ const (
 	CredentialPreAuthKey  CredentialKind = "authkey"
 	CredentialOAuthClient CredentialKind = "oauth_client" //nolint:gosec // discriminator value, not a credential
 	CredentialOAuthToken  CredentialKind = "oauth_token"  //nolint:gosec // discriminator value, not a credential
+	CredentialSCIMToken   CredentialKind = "scim_token"   //nolint:gosec // discriminator value, not a credential
 )
 
 // Credential is the unified storage model for every authenticatable secret:
-// API keys, pre-auth keys, OAuth clients, and OAuth access tokens. Each row is
-// discriminated by [Credential.Kind]. Only a hash of the secret is stored:
-// SHA-256, or a legacy bcrypt/Argon2id hash until the next authentication.
+// API keys, pre-auth keys, OAuth clients, OAuth access tokens, and SCIM
+// tokens. Each row is discriminated by [Credential.Kind]. Only a hash of the
+// secret is stored: SHA-256, or a legacy bcrypt/Argon2id hash until the next
+// authentication.
 // Identifier is the public, indexed lookup value — the 12-char prefix for API
 // keys, pre-auth keys and access tokens, and the client id for OAuth clients —
 // and is unique within a kind.
 //
 // Per-kind fields are sparse by design: Reusable/Ephemeral/Used apply to
-// pre-auth keys, LastSeen to API keys, Scopes to OAuth credentials, ClientID
-// links an OAuth token to its issuing client, and Tags to pre-auth keys and
-// OAuth credentials.
+// pre-auth keys, LastSeen to API keys and SCIM tokens, Scopes to OAuth
+// credentials, ClientID links an OAuth token to its issuing client, and Tags
+// to pre-auth keys and OAuth credentials.
 type Credential struct {
 	ID         uint64         `gorm:"primary_key"`
 	Kind       CredentialKind `gorm:"not null;index:idx_credentials_identifier,unique,priority:1"`

@@ -99,6 +99,18 @@ const (
 	APIKeyLastSeen   = "api_key.last_seen"  //nolint:gosec // G101: not a credential
 )
 
+// SCIMToken fields.
+const (
+	SCIMTokenID         = "scim_token.id"         //nolint:gosec // G101: not a credential
+	SCIMTokenPrefix     = "scim_token.prefix"     //nolint:gosec // G101: not a credential
+	SCIMTokenExpiration = "scim_token.expiration" //nolint:gosec // G101: not a credential
+	SCIMTokenRevoked    = "scim_token.revoked"    //nolint:gosec // G101: not a credential
+
+	SCIMPrincipalKind         = "scim.principal.kind"
+	SCIMPrincipalCredentialID = "scim.principal.credential_id"
+	SCIMPrincipalClientID     = "scim.principal.client_id"
+)
+
 // Route fields.
 const (
 	RoutesAnnounced    = "routes.announced"

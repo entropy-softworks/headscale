@@ -740,7 +740,8 @@ func TestCredentialTableRoundTrip(t *testing.T) {
 
 // requireCredentialConstraints asserts the credentials table rejects rows the
 // application must never write: an unknown kind, a hash in no known format,
-// and a missing hash on a usable (unrevoked) row.
+// and a missing hash on a usable (unrevoked) row; and that it accepts the
+// newest kind, scim_token.
 func requireCredentialConstraints(t *testing.T, db *gorm.DB) {
 	t.Helper()
 
@@ -754,6 +755,10 @@ func requireCredentialConstraints(t *testing.T, db *gorm.DB) {
 	for name, cred := range bad {
 		require.Error(t, db.Create(&cred).Error, name)
 	}
+
+	require.NoError(t, db.Create(&types.Credential{
+		Kind: types.CredentialSCIMToken, Identifier: "chk000000005", Hash: []byte("$sha256$00"),
+	}).Error, "every known kind is accepted")
 
 	// Only the migration writes hashless rows, as NULL.
 	require.NoError(t, db.Exec(

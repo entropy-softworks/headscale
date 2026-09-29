@@ -583,7 +583,7 @@ func TestAPIv2OAuth_SetDeviceRoutesCompat(t *testing.T) {
 // tokens reach no v2 operation, and neither an all-scope client nor an
 // all-scope token can reach scim.
 func TestAPIv2OAuth_SCIMScope(t *testing.T) {
-	_, baseURL, admin := newOAuthTestServer(t)
+	app, baseURL, admin := newOAuthTestServer(t)
 
 	// scim does not require tags.
 	_, scimSecret := createClient(t, baseURL, admin, []string{"scim"}, nil)
@@ -619,6 +619,12 @@ func TestAPIv2OAuth_SCIMScope(t *testing.T) {
 		KeyType: "client", Scopes: []string{"scim"},
 	})
 	assert.Equal(t, http.StatusForbidden, st, "all does not grant scim, so it cannot delegate it")
+
+	// A SCIM token is not an API key: it authenticates nowhere on the v2 API.
+	scimToken, _, err := app.state.CreateSCIMToken("idp", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized,
+		apiGet(t, baseURL+"/api/v2/tailnet/-/devices", scimToken))
 
 	// A client holding both oauth_keys and scim may delegate scim.
 	_, delegSecret := createClient(t, baseURL, admin, []string{"oauth_keys", "scim"}, nil)

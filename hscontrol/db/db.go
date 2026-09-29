@@ -307,6 +307,16 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '' AND tags != 'null'
 				},
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				// Admit SCIM bearer tokens (kind scim_token) in the
+				// credentials table by widening its kind CHECK constraint.
+				// SQLite rebuilds the table with foreign keys still enabled
+				// (see rebuildCredentialsTableSQLite); Postgres swaps the
+				// constraint in place.
+				ID:       "202609281330-credentials-scim-token-kind",
+				Migrate:  allowSCIMTokenKind,
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 		},
 	)
 

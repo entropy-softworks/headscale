@@ -42,13 +42,13 @@ CREATE UNIQUE INDEX idx_name_provider_identifier ON users(name, provider_identif
 CREATE UNIQUE INDEX idx_name_no_provider_identifier ON users(name) WHERE provider_identifier IS NULL;
 
 -- Unified store for every authenticatable secret (API keys, pre-auth keys,
--- OAuth clients and access tokens), discriminated by kind. Only a hash of the
--- secret is stored (SHA-256; legacy bcrypt/Argon2id until next use); identifier
--- is the public lookup value, unique within a kind. Per-kind columns are sparse
--- by design.
+-- OAuth clients and access tokens, SCIM tokens), discriminated by kind. Only a
+-- hash of the secret is stored (SHA-256; legacy bcrypt/Argon2id until next
+-- use); identifier is the public lookup value, unique within a kind. Per-kind
+-- columns are sparse by design.
 CREATE TABLE credentials(
   id integer PRIMARY KEY AUTOINCREMENT,
-  kind text NOT NULL CHECK(kind IN ('api','authkey','oauth_client','oauth_token')),
+  kind text NOT NULL CHECK(kind IN ('api','authkey','oauth_client','oauth_token','scim_token')),
   identifier text,
   hash blob,
   user_id integer,

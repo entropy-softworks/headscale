@@ -7,6 +7,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// credentialKindsSQL lists every [types.CredentialKind] for the kind CHECK
+// constraint. Adding a kind means extending it, schema.sql, and a migration
+// that widens the constraint on existing databases (see allowSCIMTokenKind).
+//
+//nolint:gosec // kind names, not a credential
+const credentialKindsSQL = `'api','authkey','oauth_client','oauth_token','scim_token'`
+
 // credentialsDDLSQLite matches schema.sql byte-for-byte (the squibble digest is
 // the SQLite source of truth). Only revoked legacy rows may lack a hash, and
 // every stored hash format ($sha256$, $argon2id$, bcrypt $2a$) starts with '$'.
@@ -17,7 +24,7 @@ import (
 //nolint:gosec // DDL, not a credential
 const credentialsDDLSQLite = `CREATE TABLE credentials(
   id integer PRIMARY KEY AUTOINCREMENT,
-  kind text NOT NULL CHECK(kind IN ('api','authkey','oauth_client','oauth_token')),
+  kind text NOT NULL CHECK(kind IN (` + credentialKindsSQL + `)),
   identifier text,
   hash blob,
   user_id integer,
@@ -44,7 +51,7 @@ const credentialsDDLSQLite = `CREATE TABLE credentials(
 //nolint:gosec // DDL, not a credential
 const credentialsDDLPostgres = `CREATE TABLE credentials(
   id bigserial PRIMARY KEY,
-  kind text NOT NULL CHECK(kind IN ('api','authkey','oauth_client','oauth_token')),
+  kind text NOT NULL CHECK(kind IN (` + credentialKindsSQL + `)),
   identifier text,
   hash bytea,
   user_id bigint,
@@ -337,8 +344,6 @@ GREATEST((SELECT COALESCE(MAX(id), 0) FROM credentials), ?, 1))`, last).Error
 }
 
 // sqliteSequence returns the AUTOINCREMENT counter of table, 0 if unset.
-//
-// TODO(kradalby): remove in 0.31 with the credentials migration.
 func sqliteSequence(tx *gorm.DB, table string) (int64, error) {
 	var seq int64
 
@@ -352,8 +357,6 @@ func sqliteSequence(tx *gorm.DB, table string) (int64, error) {
 }
 
 // raiseSQLiteSequence sets the AUTOINCREMENT counter of table to at least seq.
-//
-// TODO(kradalby): remove in 0.31 with the credentials migration.
 func raiseSQLiteSequence(tx *gorm.DB, table string, seq int64) error {
 	res := tx.Exec(`UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?`, seq, table)
 	if res.Error == nil && res.RowsAffected == 0 && seq > 0 {
