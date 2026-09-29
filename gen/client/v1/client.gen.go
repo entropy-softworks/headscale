@@ -104,6 +104,18 @@ type CreatePreAuthKeyRequestBody struct {
 	User       *string    `json:"user,omitempty"`
 }
 
+// CreateScimTokenOutputBody defines model for CreateScimTokenOutputBody.
+type CreateScimTokenOutputBody struct {
+	ScimToken ScimToken `json:"scimToken"`
+	Token     string    `json:"token"`
+}
+
+// CreateScimTokenRequestBody defines model for CreateScimTokenRequestBody.
+type CreateScimTokenRequestBody struct {
+	Description *string    `json:"description,omitempty"`
+	Expiration  *time.Time `json:"expiration,omitempty"`
+}
+
 // CreateUserRequestBody defines model for CreateUserRequestBody.
 type CreateUserRequestBody struct {
 	DisplayName *string `json:"displayName,omitempty"`
@@ -131,6 +143,9 @@ type DeletePreAuthKeyOutputBody = map[string]interface{}
 
 // DeleteUserOutputBody defines model for DeleteUserOutputBody.
 type DeleteUserOutputBody = map[string]interface{}
+
+// EmptyScimTokenOutputBody defines model for EmptyScimTokenOutputBody.
+type EmptyScimTokenOutputBody = map[string]interface{}
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
@@ -218,6 +233,11 @@ type ListPreAuthKeysOutputBody struct {
 	PreAuthKeys []PreAuthKey `json:"preAuthKeys"`
 }
 
+// ListScimTokensOutputBody defines model for ListScimTokensOutputBody.
+type ListScimTokensOutputBody struct {
+	ScimTokens []ScimToken `json:"scimTokens"`
+}
+
 // ListUsersOutputBody defines model for ListUsersOutputBody.
 type ListUsersOutputBody struct {
 	Users []User `json:"users"`
@@ -293,6 +313,17 @@ type PreAuthKey struct {
 // PreAuthKeyOutputBody defines model for PreAuthKeyOutputBody.
 type PreAuthKeyOutputBody struct {
 	PreAuthKey PreAuthKey `json:"preAuthKey"`
+}
+
+// ScimToken defines model for ScimToken.
+type ScimToken struct {
+	CreatedAt   *time.Time `json:"createdAt"`
+	Description string     `json:"description"`
+	Expiration  *time.Time `json:"expiration"`
+	Id          string     `json:"id"`
+	LastSeen    *time.Time `json:"lastSeen"`
+	Prefix      string     `json:"prefix"`
+	Revoked     *time.Time `json:"revoked"`
 }
 
 // SetApprovedRoutesRequestBody defines model for SetApprovedRoutesRequestBody.
@@ -394,6 +425,9 @@ type CreatePreAuthKeyJSONRequestBody = CreatePreAuthKeyRequestBody
 
 // ExpirePreAuthKeyJSONRequestBody defines body for ExpirePreAuthKey for application/json ContentType.
 type ExpirePreAuthKeyJSONRequestBody = ExpirePreAuthKeyRequestBody
+
+// CreateScimTokenJSONRequestBody defines body for CreateScimToken for application/json ContentType.
+type CreateScimTokenJSONRequestBody = CreateScimTokenRequestBody
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = CreateUserRequestBody
@@ -719,6 +753,41 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/preauthkey/expire (the `ExpirePreAuthKey` operationId).
 	ExpirePreAuthKey(ctx context.Context, body ExpirePreAuthKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListScimTokens List SCIM tokens
+	//
+	// Corresponds with GET /api/v1/scim/token (the `ListScimTokens` operationId).
+	ListScimTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateScimTokenWithBody Create SCIM token
+	//
+	// Creates a bearer token for an identity provider's SCIM client. The token is returned once and cannot be retrieved again.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/scim/token (the `CreateScimToken` operationId).
+	CreateScimTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateScimToken Create SCIM token
+	//
+	// Creates a bearer token for an identity provider's SCIM client. The token is returned once and cannot be retrieved again.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/scim/token (the `CreateScimToken` operationId).
+	CreateScimToken(ctx context.Context, body CreateScimTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteScimToken Delete SCIM token
+	//
+	// Corresponds with DELETE /api/v1/scim/token/{id} (the `DeleteScimToken` operationId).
+	DeleteScimToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeScimToken Revoke SCIM token
+	//
+	// Revokes a SCIM token; it stops authenticating but stays listed.
+	//
+	// Corresponds with POST /api/v1/scim/token/{id}/revoke (the `RevokeScimToken` operationId).
+	RevokeScimToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUsers List users
 	//
@@ -1368,6 +1437,91 @@ func (c *Client) ExpirePreAuthKeyWithBody(ctx context.Context, contentType strin
 // Corresponds with POST /api/v1/preauthkey/expire (the `ExpirePreAuthKey` operationId).
 func (c *Client) ExpirePreAuthKey(ctx context.Context, body ExpirePreAuthKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExpirePreAuthKeyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListScimTokens List SCIM tokens
+//
+// Corresponds with GET /api/v1/scim/token (the `ListScimTokens` operationId).
+func (c *Client) ListScimTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListScimTokensRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateScimTokenWithBody Create SCIM token
+//
+// Creates a bearer token for an identity provider's SCIM client. The token is returned once and cannot be retrieved again.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/scim/token (the `CreateScimToken` operationId).
+func (c *Client) CreateScimTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateScimTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateScimToken Create SCIM token
+//
+// Creates a bearer token for an identity provider's SCIM client. The token is returned once and cannot be retrieved again.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/scim/token (the `CreateScimToken` operationId).
+func (c *Client) CreateScimToken(ctx context.Context, body CreateScimTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateScimTokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteScimToken Delete SCIM token
+//
+// Corresponds with DELETE /api/v1/scim/token/{id} (the `DeleteScimToken` operationId).
+func (c *Client) DeleteScimToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteScimTokenRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeScimToken Revoke SCIM token
+//
+// Revokes a SCIM token; it stops authenticating but stays listed.
+//
+// Corresponds with POST /api/v1/scim/token/{id}/revoke (the `RevokeScimToken` operationId).
+func (c *Client) RevokeScimToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeScimTokenRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -2504,6 +2658,141 @@ func NewExpirePreAuthKeyRequestWithBody(server string, contentType string, body 
 	return req, nil
 }
 
+// NewListScimTokensRequest constructs an http.Request for the ListScimTokens method
+func NewListScimTokensRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/scim/token")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateScimTokenRequest calls the generic CreateScimToken builder with application/json body
+func NewCreateScimTokenRequest(server string, body CreateScimTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateScimTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateScimTokenRequestWithBody constructs an http.Request for the CreateScimToken method, with any body, and a specified content type
+func NewCreateScimTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/scim/token")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteScimTokenRequest constructs an http.Request for the DeleteScimToken method
+func NewDeleteScimTokenRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uint64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/scim/token/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeScimTokenRequest constructs an http.Request for the RevokeScimToken method
+func NewRevokeScimTokenRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uint64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/scim/token/%s/revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListUsersRequest constructs an http.Request for the ListUsers method
 func NewListUsersRequest(server string, params *ListUsersParams) (*http.Request, error) {
 	var err error
@@ -3012,6 +3301,47 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/preauthkey/expire (the `ExpirePreAuthKey` operationId).
 	ExpirePreAuthKeyWithResponse(ctx context.Context, body ExpirePreAuthKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*ExpirePreAuthKeyResponse, error)
+
+	// ListScimTokensWithResponse List SCIM tokens
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/scim/token (the `ListScimTokens` operationId).
+	ListScimTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListScimTokensResponse, error)
+
+	// CreateScimTokenWithBodyWithResponse Create SCIM token
+	//
+	// Creates a bearer token for an identity provider's SCIM client. The token is returned once and cannot be retrieved again.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/scim/token (the `CreateScimToken` operationId).
+	CreateScimTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateScimTokenResponse, error)
+
+	// CreateScimTokenWithResponse Create SCIM token
+	//
+	// Creates a bearer token for an identity provider's SCIM client. The token is returned once and cannot be retrieved again.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/scim/token (the `CreateScimToken` operationId).
+	CreateScimTokenWithResponse(ctx context.Context, body CreateScimTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateScimTokenResponse, error)
+
+	// DeleteScimTokenWithResponse Delete SCIM token
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/scim/token/{id} (the `DeleteScimToken` operationId).
+	DeleteScimTokenWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteScimTokenResponse, error)
+
+	// RevokeScimTokenWithResponse Revoke SCIM token
+	//
+	// Revokes a SCIM token; it stops authenticating but stays listed.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/scim/token/{id}/revoke (the `RevokeScimToken` operationId).
+	RevokeScimTokenWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RevokeScimTokenResponse, error)
 
 	// ListUsersWithResponse List users
 	//
@@ -4249,6 +4579,198 @@ func (r ExpirePreAuthKeyResponse) ContentType() string {
 	return ""
 }
 
+type ListScimTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ListScimTokensOutputBody
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListScimTokensResponse) GetJSON200() *ListScimTokensOutputBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListScimTokensResponse) GetApplicationproblemJSONDefault() *ErrorModel {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListScimTokensResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListScimTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListScimTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListScimTokensResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateScimTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CreateScimTokenOutputBody
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateScimTokenResponse) GetJSON200() *CreateScimTokenOutputBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateScimTokenResponse) GetApplicationproblemJSONDefault() *ErrorModel {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateScimTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateScimTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateScimTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateScimTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteScimTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EmptyScimTokenOutputBody
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteScimTokenResponse) GetJSON200() *EmptyScimTokenOutputBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteScimTokenResponse) GetApplicationproblemJSONDefault() *ErrorModel {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteScimTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteScimTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteScimTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteScimTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeScimTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EmptyScimTokenOutputBody
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RevokeScimTokenResponse) GetJSON200() *EmptyScimTokenOutputBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeScimTokenResponse) GetApplicationproblemJSONDefault() *ErrorModel {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeScimTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeScimTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeScimTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeScimTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListUsersResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4939,6 +5461,77 @@ func (c *ClientWithResponses) ExpirePreAuthKeyWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseExpirePreAuthKeyResponse(rsp)
+}
+
+// ListScimTokensWithResponse List SCIM tokens
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/scim/token (the `ListScimTokens` operationId).
+func (c *ClientWithResponses) ListScimTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListScimTokensResponse, error) {
+	rsp, err := c.ListScimTokens(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListScimTokensResponse(rsp)
+}
+
+// CreateScimTokenWithBodyWithResponse Create SCIM token
+//
+// Creates a bearer token for an identity provider's SCIM client. The token is returned once and cannot be retrieved again.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/scim/token (the `CreateScimToken` operationId).
+func (c *ClientWithResponses) CreateScimTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateScimTokenResponse, error) {
+	rsp, err := c.CreateScimTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateScimTokenResponse(rsp)
+}
+
+// CreateScimTokenWithResponse Create SCIM token
+//
+// Creates a bearer token for an identity provider's SCIM client. The token is returned once and cannot be retrieved again.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/scim/token (the `CreateScimToken` operationId).
+func (c *ClientWithResponses) CreateScimTokenWithResponse(ctx context.Context, body CreateScimTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateScimTokenResponse, error) {
+	rsp, err := c.CreateScimToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateScimTokenResponse(rsp)
+}
+
+// DeleteScimTokenWithResponse Delete SCIM token
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/scim/token/{id} (the `DeleteScimToken` operationId).
+func (c *ClientWithResponses) DeleteScimTokenWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteScimTokenResponse, error) {
+	rsp, err := c.DeleteScimToken(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteScimTokenResponse(rsp)
+}
+
+// RevokeScimTokenWithResponse Revoke SCIM token
+//
+// Revokes a SCIM token; it stops authenticating but stays listed.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/scim/token/{id}/revoke (the `RevokeScimToken` operationId).
+func (c *ClientWithResponses) RevokeScimTokenWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RevokeScimTokenResponse, error) {
+	rsp, err := c.RevokeScimToken(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeScimTokenResponse(rsp)
 }
 
 // ListUsersWithResponse List users
@@ -5814,6 +6407,138 @@ func ParseExpirePreAuthKeyResponse(rsp *http.Response) (*ExpirePreAuthKeyRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ExpirePreAuthKeyOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListScimTokensResponse parses an HTTP response from a ListScimTokensWithResponse call
+func ParseListScimTokensResponse(rsp *http.Response) (*ListScimTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListScimTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ListScimTokensOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateScimTokenResponse parses an HTTP response from a CreateScimTokenWithResponse call
+func ParseCreateScimTokenResponse(rsp *http.Response) (*CreateScimTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateScimTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CreateScimTokenOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteScimTokenResponse parses an HTTP response from a DeleteScimTokenWithResponse call
+func ParseDeleteScimTokenResponse(rsp *http.Response) (*DeleteScimTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteScimTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EmptyScimTokenOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeScimTokenResponse parses an HTTP response from a RevokeScimTokenWithResponse call
+func ParseRevokeScimTokenResponse(rsp *http.Response) (*RevokeScimTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeScimTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EmptyScimTokenOutputBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
