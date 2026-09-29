@@ -1,0 +1,33 @@
+# operations
+ignore nickName (not stored)
+set displayName "Babs Jensen"
+ignore urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department (extension schema)
+ignore phoneNumbers[type eq "work"].value (not stored)
+set externalId "e5b0c0d4"
+# result
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:User"
+  ],
+  "id": "7",
+  "externalId": "e5b0c0d4",
+  "userName": "test.user@okta.local",
+  "name": {
+    "formatted": "Old Name",
+    "familyName": "Name",
+    "givenName": "Old"
+  },
+  "displayName": "Babs Jensen",
+  "active": true,
+  "emails": [
+    {
+      "value": "old@example.com",
+      "type": "work",
+      "primary": true
+    }
+  ],
+  "meta": {
+    "resourceType": "User",
+    "created": "1970-01-01T00:00:00Z"
+  }
+}

@@ -1,0 +1,26 @@
+# operations
+add-members ["23a35c27-23d3-4c03-b4c5-6443c09e7173"]
+# membership operations for the handler
+add-members ["23a35c27-23d3-4c03-b4c5-6443c09e7173"]
+# result
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:Group"
+  ],
+  "id": "g1",
+  "displayName": "old",
+  "members": [
+    {
+      "value": "3"
+    },
+    {
+      "value": "a71aac5b-f8b0-4c4e-8f2e-5f4c1d1e1b2a"
+    },
+    {
+      "value": "89bb1940-b905-4575-9e7f-6f887cfb368e"
+    },
+    {
+      "value": "23a35c27-23d3-4c03-b4c5-6443c09e7173"
+    }
+  ]
+}

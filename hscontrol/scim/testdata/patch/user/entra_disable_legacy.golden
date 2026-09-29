@@ -1,0 +1,29 @@
+# operations
+set active false
+# result
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:User"
+  ],
+  "id": "7",
+  "externalId": "ext-7",
+  "userName": "test.user@okta.local",
+  "name": {
+    "formatted": "Old Name",
+    "familyName": "Name",
+    "givenName": "Old"
+  },
+  "displayName": "Old Name",
+  "active": false,
+  "emails": [
+    {
+      "value": "old@example.com",
+      "type": "work",
+      "primary": true
+    }
+  ],
+  "meta": {
+    "resourceType": "User",
+    "created": "1970-01-01T00:00:00Z"
+  }
+}

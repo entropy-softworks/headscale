@@ -1,0 +1,22 @@
+# operations
+set displayName "Test SCIMv2"
+# membership operations for the handler
+# result
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:Group"
+  ],
+  "id": "g1",
+  "displayName": "Test SCIMv2",
+  "members": [
+    {
+      "value": "3"
+    },
+    {
+      "value": "a71aac5b-f8b0-4c4e-8f2e-5f4c1d1e1b2a"
+    },
+    {
+      "value": "89bb1940-b905-4575-9e7f-6f887cfb368e"
+    }
+  ]
+}

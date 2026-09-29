@@ -1,0 +1,10 @@
+{
+    "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+    "Operations": [
+        {"op": "Add", "path": "nickName", "value": "Babs"},
+        {"op": "Add", "path": "displayName", "value": "Babs Jensen"},
+        {"op": "Replace", "path": "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department", "value": "Sales"},
+        {"op": "Replace", "path": "phoneNumbers[type eq \"work\"].value", "value": "+1 555 0100"},
+        {"op": "Replace", "path": "externalId", "value": "e5b0c0d4"}
+    ]
+}

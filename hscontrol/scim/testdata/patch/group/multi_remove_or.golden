@@ -1,0 +1,18 @@
+# operations
+remove-members ["1","2"]
+replace-members ["4"]
+set externalId "ext-1"
+replace-members []
+# membership operations for the handler
+remove-members ["1","2"]
+replace-members ["4"]
+replace-members []
+# result
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:Group"
+  ],
+  "id": "g1",
+  "externalId": "ext-1",
+  "displayName": "old"
+}

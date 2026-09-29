@@ -1,0 +1,30 @@
+# operations
+set emails[type eq "work"].value "updatedEmail@microsoft.com"
+set name.familyName "updatedFamilyName"
+# result
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:User"
+  ],
+  "id": "7",
+  "externalId": "ext-7",
+  "userName": "test.user@okta.local",
+  "name": {
+    "formatted": "Old Name",
+    "familyName": "updatedFamilyName",
+    "givenName": "Old"
+  },
+  "displayName": "Old Name",
+  "active": true,
+  "emails": [
+    {
+      "value": "updatedEmail@microsoft.com",
+      "type": "work",
+      "primary": true
+    }
+  ],
+  "meta": {
+    "resourceType": "User",
+    "created": "1970-01-01T00:00:00Z"
+  }
+}

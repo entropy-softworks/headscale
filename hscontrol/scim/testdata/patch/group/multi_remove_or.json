@@ -1,0 +1,8 @@
+{
+    "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+    "Operations": [
+        {"op": "remove", "path": "members[value eq \"1\" or value eq \"2\"]"},
+        {"op": "replace", "value": {"members": [{"value": "4"}], "externalId": "ext-1"}},
+        {"op": "remove", "path": "members"}
+    ]
+}

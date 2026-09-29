@@ -1,0 +1,14 @@
+{
+    "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+    "Operations": [{
+        "op": "replace",
+        "value": {
+            "id": "23a35c27-23d3-4c03-b4c5-6443c09e7173",
+            "userName": "test.user@okta.local",
+            "name": {"givenName": "Another", "familyName": "User"},
+            "emails": [{"primary": true, "value": "another.user@okta.local", "type": "work"}],
+            "password": "secret",
+            "active": true
+        }
+    }]
+}

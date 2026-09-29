@@ -1,0 +1,16 @@
+{
+    "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+    "Operations": [
+        {
+            "op": "replace",
+            "value": {
+                "displayName": "Test User",
+                "name.givenName": "Test",
+                "name.familyName": "User",
+                "active": false,
+                "emails[type eq \"work\"].value": "test.user@contoso.com",
+                "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber": "42"
+            }
+        }
+    ]
+}

@@ -1,0 +1,20 @@
+# operations
+replace-members ["23a35c27-23d3-4c03-b4c5-6443c09e7173","89bb1940-b905-4575-9e7f-6f887cfb368e"]
+# membership operations for the handler
+replace-members ["23a35c27-23d3-4c03-b4c5-6443c09e7173","89bb1940-b905-4575-9e7f-6f887cfb368e"]
+# result
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:Group"
+  ],
+  "id": "g1",
+  "displayName": "old",
+  "members": [
+    {
+      "value": "23a35c27-23d3-4c03-b4c5-6443c09e7173"
+    },
+    {
+      "value": "89bb1940-b905-4575-9e7f-6f887cfb368e"
+    }
+  ]
+}
