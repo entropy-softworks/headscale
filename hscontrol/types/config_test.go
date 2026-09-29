@@ -1700,3 +1700,120 @@ oidc:
 		})
 	}
 }
+
+func TestSCIMConfigValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		block      string
+		withOIDC   bool
+		wantErr    string
+		wantConfig SCIMConfig
+	}{
+		{
+			name:       "disabled by default",
+			withOIDC:   true,
+			wantConfig: SCIMConfig{GroupsDomain: "oidc.example", LinkBy: SCIMLinkByEmail, LinkClaim: "sub", AdoptExistingUsers: true},
+		},
+		{
+			name:     "enabled with groups domain",
+			withOIDC: true,
+			block: `
+scim:
+  enabled: true
+  groups_domain: Example.com`,
+			wantConfig: SCIMConfig{
+				Enabled: true, GroupsDomain: "example.com", LinkBy: SCIMLinkByEmail,
+				LinkClaim: "sub", AdoptExistingUsers: true,
+			},
+		},
+		{
+			name:     "groups domain defaults to oidc groups domain",
+			withOIDC: true,
+			block: `
+scim:
+  enabled: true
+  link_by: external_id
+  link_claim: oid
+  adopt_existing_users: false
+  require_provisioning: true`,
+			wantConfig: SCIMConfig{
+				Enabled: true, GroupsDomain: "oidc.example", LinkBy: SCIMLinkByExternalID,
+				LinkClaim: "oid", RequireProvisioning: true,
+			},
+		},
+		{
+			name: "requires oidc",
+			block: `
+scim:
+  enabled: true
+  groups_domain: example.com`,
+			wantErr: "requires OIDC",
+		},
+		{
+			name:     "invalid link_by",
+			withOIDC: true,
+			block: `
+scim:
+  enabled: true
+  link_by: username`,
+			wantErr: "scim.link_by must be",
+		},
+		{
+			name:     "external_id needs a claim",
+			withOIDC: true,
+			block: `
+scim:
+  enabled: true
+  link_by: external_id
+  link_claim: ""`,
+			wantErr: "scim.link_claim must not be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viper.Reset()
+
+			oidcBlock := ""
+			if tt.withOIDC {
+				oidcBlock = `
+oidc:
+  issuer: https://idp.example.com
+  client_id: headscale
+  client_secret: sekret
+  groups:
+    domain: oidc.example`
+			}
+
+			tmpDir := t.TempDir()
+			configYaml := []byte(`---
+noise:
+  private_key_path: noise_private.key
+server_url: http://127.0.0.1:8080
+prefixes:
+  v4: 100.64.0.0/10
+dns:
+  magic_dns: false
+  override_local_dns: false
+database:
+  type: sqlite` + oidcBlock + tt.block + "\n")
+
+			require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.yaml"), configYaml, 0o600))
+			require.NoError(t, LoadConfig(tmpDir, false))
+
+			err := validateServerConfig()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			cfg, err := LoadServerConfig()
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantConfig, cfg.SCIM)
+		})
+	}
+}

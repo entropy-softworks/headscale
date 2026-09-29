@@ -46,6 +46,9 @@ var (
 	errOIDCClientIDRequired      = errors.New("oidc.client_id is required when oidc.issuer is set")
 	errOIDCClientSecretRequired  = errors.New("oidc.client_secret or oidc.client_secret_path is required when oidc.issuer is set")
 	errOIDCGroupsClaimRequired   = errors.New("oidc.groups.claim must not be empty when oidc.groups.enabled is set")
+	errSCIMRequiresOIDC          = errors.New("scim.enabled requires OIDC (oidc.issuer), the only way provisioned users can log in")
+	errSCIMLinkByInvalid         = errors.New("scim.link_by must be \"email\" or \"external_id\"")
+	errSCIMLinkClaimRequired     = errors.New("scim.link_claim must not be empty when scim.link_by is \"external_id\"")
 	errServerURLSuffix           = errors.New("server_url cannot be part of base_domain in a way that could make the DERP and headscale server unreachable")
 	errServerURLSame             = errors.New("server_url cannot use the same domain as base_domain in a way that could make the DERP and headscale server unreachable")
 	errInvalidPKCEMethod         = errors.New("pkce.method must be either 'plain' or 'S256'")
@@ -158,6 +161,7 @@ type Config struct {
 	UnixSocketPermission fs.FileMode
 
 	OIDC OIDCConfig
+	SCIM SCIMConfig
 
 	LogTail    LogTailConfig
 	Taildrop   TaildropConfig
@@ -398,6 +402,44 @@ type OIDCGroupsConfig struct {
 	Domain string
 }
 
+// SCIM link keys: how a SCIM-provisioned user is matched to their OIDC login.
+const (
+	SCIMLinkByEmail      = "email"
+	SCIMLinkByExternalID = "external_id"
+)
+
+// SCIMConfig controls the SCIM 2.0 provisioning endpoint at /scim/v2, through
+// which an identity provider creates, updates, suspends and deletes users and
+// manages group memberships.
+type SCIMConfig struct {
+	// Enabled serves the SCIM endpoint. It requires OIDC, the only way a
+	// provisioned user can log in.
+	Enabled bool
+
+	// GroupsDomain qualifies SCIM group names, referenced in the policy as
+	// group:<name>@<GroupsDomain>. Defaults to oidc.groups.domain.
+	GroupsDomain string
+
+	// LinkBy selects how a provisioned user is matched to their first OIDC
+	// login: SCIMLinkByEmail (the login's verified email equals the SCIM
+	// userName) or SCIMLinkByExternalID (the LinkClaim claim equals the SCIM
+	// externalId).
+	LinkBy string
+
+	// LinkClaim is the OIDC claim compared with externalId when LinkBy is
+	// SCIMLinkByExternalID, such as sub or Entra ID's oid.
+	LinkClaim string
+
+	// AdoptExistingUsers lets a SCIM create take over an existing OIDC user
+	// whose stored (verified) email equals the userName, instead of refusing
+	// it as a conflict.
+	AdoptExistingUsers bool
+
+	// RequireProvisioning refuses OIDC logins from users the identity
+	// provider has not provisioned through SCIM.
+	RequireProvisioning bool
+}
+
 type DERPConfig struct {
 	ServerEnabled                      bool
 	AutomaticallyAddEmbeddedDerpRegion bool
@@ -552,6 +594,42 @@ func validateOIDCConfig() error {
 	return nil
 }
 
+// validateSCIMConfig validates the SCIM settings, called when scim.enabled is
+// set.
+func validateSCIMConfig() error {
+	if viper.GetString("oidc.issuer") == "" {
+		return errSCIMRequiresOIDC
+	}
+
+	_, err := QualifyGroupName("group", scimGroupsDomain())
+	if err != nil {
+		return fmt.Errorf("scim.groups_domain: %w", err)
+	}
+
+	switch viper.GetString("scim.link_by") {
+	case SCIMLinkByEmail:
+	case SCIMLinkByExternalID:
+		if strings.TrimSpace(viper.GetString("scim.link_claim")) == "" {
+			return errSCIMLinkClaimRequired
+		}
+	default:
+		return fmt.Errorf("%w: got %q", errSCIMLinkByInvalid, viper.GetString("scim.link_by"))
+	}
+
+	return nil
+}
+
+// scimGroupsDomain returns scim.groups_domain, defaulting to
+// oidc.groups.domain.
+func scimGroupsDomain() string {
+	domain := strings.TrimSpace(viper.GetString("scim.groups_domain"))
+	if domain == "" {
+		domain = strings.TrimSpace(viper.GetString("oidc.groups.domain"))
+	}
+
+	return FoldGroupName(domain)
+}
+
 // validateOIDCGroupsConfig validates the group sync settings, called when
 // oidc.groups.enabled is set.
 func validateOIDCGroupsConfig() error {
@@ -663,6 +741,11 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("oidc.email_verified_required", true)
 	viper.SetDefault("oidc.groups.enabled", false)
 	viper.SetDefault("oidc.groups.claim", "groups")
+	viper.SetDefault("scim.enabled", false)
+	viper.SetDefault("scim.link_by", SCIMLinkByEmail)
+	viper.SetDefault("scim.link_claim", "sub")
+	viper.SetDefault("scim.adopt_existing_users", true)
+	viper.SetDefault("scim.require_provisioning", false)
 
 	viper.SetDefault("logtail.enabled", false)
 	viper.SetDefault("taildrop.enabled", true)
@@ -806,6 +889,22 @@ func validateServerConfigInto(v *configValidator) {
 				Detail: err.Error(),
 				Hint:   "check oidc.issuer, oidc.client_id, oidc.client_secret, and oidc.pkce.method",
 				Cause:  err,
+			})
+		}
+	}
+
+	if viper.GetBool("scim.enabled") {
+		err := validateSCIMConfig()
+		if err != nil {
+			v.Add(&ConfigError{
+				Reason: "SCIM configuration is invalid",
+				Detail: err.Error(),
+				Hint:   "set oidc.issuer, and scim.groups_domain or oidc.groups.domain",
+				Cause:  err,
+				Current: []KV{
+					{"scim.groups_domain", viper.GetString("scim.groups_domain")},
+					{"scim.link_by", viper.GetString("scim.link_by")},
+				},
 			})
 		}
 	}
@@ -1801,6 +1900,15 @@ func LoadServerConfig() (*Config, error) {
 				Claim:   strings.TrimSpace(viper.GetString("oidc.groups.claim")),
 				Domain:  FoldGroupName(strings.TrimSpace(viper.GetString("oidc.groups.domain"))),
 			},
+		},
+
+		SCIM: SCIMConfig{
+			Enabled:             viper.GetBool("scim.enabled"),
+			GroupsDomain:        scimGroupsDomain(),
+			LinkBy:              viper.GetString("scim.link_by"),
+			LinkClaim:           strings.TrimSpace(viper.GetString("scim.link_claim")),
+			AdoptExistingUsers:  viper.GetBool("scim.adopt_existing_users"),
+			RequireProvisioning: viper.GetBool("scim.require_provisioning"),
 		},
 
 		LogTail: logTailConfig,
