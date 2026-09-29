@@ -2660,3 +2660,60 @@ func TestNodeStoreNodeKeyIndexMatchesNodes(t *testing.T) {
 
 	require.Empty(t, nodeKeyIndexMismatch(store.data.Load()))
 }
+
+// TestNodeStoreConcurrentWritesAndRebuilds interleaves node writes with
+// peer map rebuilds, which apply at once together with the writes already
+// waiting (see [NodeStore.drainReady]). Every call must return, so no
+// drained write may be dropped, and the final snapshot must hold every
+// write.
+func TestNodeStoreConcurrentWritesAndRebuilds(t *testing.T) {
+	const (
+		writers  = 200
+		rebuilds = 200
+	)
+
+	store := NewNodeStore(nil, allowAllPeersFunc, 4, TestBatchTimeout)
+
+	store.Start()
+	defer store.Stop()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		var wg sync.WaitGroup
+
+		for i := 1; i <= writers; i++ {
+			id := types.NodeID(i) //nolint:gosec // small positive test ids
+
+			wg.Go(func() {
+				store.PutNode(createConcurrentTestNode(id, "node"))
+				store.UpdateNode(id, func(n *types.Node) {
+					n.Hostname = fmt.Sprintf("node-%d", id)
+				})
+			})
+		}
+
+		for range rebuilds {
+			wg.Go(store.RebuildPeerMaps)
+		}
+
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("NodeStore writes did not all return: a write was dropped")
+	}
+
+	for i := 1; i <= writers; i++ {
+		id := types.NodeID(i) //nolint:gosec // small positive test ids
+
+		n, ok := store.GetNode(id)
+		require.True(t, ok, "node %d", id)
+		assert.Equal(t, fmt.Sprintf("node-%d", id), n.Hostname())
+		assert.Equal(t, writers-1, store.ListPeers(id).Len(), "node %d sees every other node", id)
+	}
+}

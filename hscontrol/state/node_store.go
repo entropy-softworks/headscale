@@ -455,7 +455,15 @@ func (s *NodeStore) processWrite() {
 		select {
 		case w := <-s.writeQueue:
 			batch = append(batch, w)
-			if len(batch) >= s.batchSize {
+			if w.op == rebuildPeerMaps {
+				// A rebuild carries no node change to batch with, and its
+				// caller (a user or policy change) is waiting to broadcast:
+				// apply it at once, together with the writes already
+				// waiting to be queued, instead of on the next tick.
+				batch = s.drainReady(batch)
+			}
+
+			if len(batch) >= s.batchSize || w.op == rebuildPeerMaps {
 				s.applyBatch(batch)
 				batch = batch[:0]
 
@@ -478,6 +486,22 @@ func (s *NodeStore) processWrite() {
 			return
 		}
 	}
+}
+
+// drainReady appends to batch the writes whose senders are already waiting,
+// up to the batch size, without blocking. The write queue is unbuffered, so
+// these are the writers that would otherwise land in this batch on the tick.
+func (s *NodeStore) drainReady(batch []work) []work {
+	for len(batch) < s.batchSize {
+		select {
+		case w := <-s.writeQueue:
+			batch = append(batch, w)
+		default:
+			return batch
+		}
+	}
+
+	return batch
 }
 
 // applyBatch applies a batch of work to the node store.
