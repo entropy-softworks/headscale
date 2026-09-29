@@ -226,3 +226,34 @@ func TestAPIv2User_SuspendRestore(t *testing.T) {
 		assert.Equalf(t, http.StatusNotFound, resp.Code, "%s: %s", path, resp.Body)
 	}
 }
+
+// TestAPIv2User_RestoreSCIMUser checks that while SCIM is enabled a user the
+// identity provider deactivated cannot be restored here, as that would
+// override the provider until its next write, while suspending it, a
+// stopgap the provider lifts, stays allowed.
+func TestAPIv2User_RestoreSCIMUser(t *testing.T) {
+	app := createTestApp(t)
+	app.cfg.SCIM = types.SCIMConfig{Enabled: true, GroupsDomain: "example.com", LinkBy: types.SCIMLinkByEmail}
+	api := registerAPIV2(t, app)
+
+	inactive, _, err := app.state.CreateSCIMUser(types.SCIMUserAttributes{UserName: "gone@example.com"}, true)
+	require.NoError(t, err)
+
+	active, _, err := app.state.CreateSCIMUser(types.SCIMUserAttributes{UserName: "here@example.com", Active: true}, true)
+	require.NoError(t, err)
+
+	resp := api.Post("/api/v2/users/"+userID(inactive)+"/restore", struct{}{})
+	require.Equalf(t, http.StatusConflict, resp.Code, "body: %s", resp.Body)
+	assert.Contains(t, resp.Body.String(), "reactivate it in your identity provider")
+	assert.Equal(t, "suspended", getUserByID(t, api, userID(inactive)).Status)
+
+	resp = api.Post("/api/v2/users/"+userID(active)+"/suspend", struct{}{})
+	require.Equalf(t, http.StatusOK, resp.Code, "body: %s", resp.Body)
+	assert.Equal(t, "suspended", getUserByID(t, api, userID(active)).Status)
+
+	// With SCIM disabled nothing competes with the admin.
+	app.cfg.SCIM.Enabled = false
+
+	resp = api.Post("/api/v2/users/"+userID(inactive)+"/restore", struct{}{})
+	require.Equalf(t, http.StatusOK, resp.Code, "body: %s", resp.Body)
+}

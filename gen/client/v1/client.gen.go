@@ -233,9 +233,19 @@ type ListPreAuthKeysOutputBody struct {
 	PreAuthKeys []PreAuthKey `json:"preAuthKeys"`
 }
 
+// ListScimGroupsOutputBody defines model for ListScimGroupsOutputBody.
+type ListScimGroupsOutputBody struct {
+	ScimGroups []ScimGroup `json:"scimGroups"`
+}
+
 // ListScimTokensOutputBody defines model for ListScimTokensOutputBody.
 type ListScimTokensOutputBody struct {
 	ScimTokens []ScimToken `json:"scimTokens"`
+}
+
+// ListScimUsersOutputBody defines model for ListScimUsersOutputBody.
+type ListScimUsersOutputBody struct {
+	ScimUsers []ScimUser `json:"scimUsers"`
 }
 
 // ListUsersOutputBody defines model for ListUsersOutputBody.
@@ -315,6 +325,22 @@ type PreAuthKeyOutputBody struct {
 	PreAuthKey PreAuthKey `json:"preAuthKey"`
 }
 
+// ReleaseScimGroupOutputBody defines model for ReleaseScimGroupOutputBody.
+type ReleaseScimGroupOutputBody = map[string]interface{}
+
+// ScimGroup defines model for ScimGroup.
+type ScimGroup struct {
+	DisplayName     string `json:"displayName"`
+	ExternalId      string `json:"externalId"`
+	ExternalName    string `json:"externalName"`
+	Id              string `json:"id"`
+	MemberCount     int64  `json:"memberCount"`
+	Name            string `json:"name"`
+	PolicyAlias     string `json:"policyAlias"`
+	PolicyReference string `json:"policyReference"`
+	Source          string `json:"source"`
+}
+
 // ScimToken defines model for ScimToken.
 type ScimToken struct {
 	CreatedAt   *time.Time `json:"createdAt"`
@@ -324,6 +350,18 @@ type ScimToken struct {
 	LastSeen    *time.Time `json:"lastSeen"`
 	Prefix      string     `json:"prefix"`
 	Revoked     *time.Time `json:"revoked"`
+}
+
+// ScimUser defines model for ScimUser.
+type ScimUser struct {
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+	ExternalId  string `json:"externalId"`
+	Id          string `json:"id"`
+	Linked      bool   `json:"linked"`
+	Name        string `json:"name"`
+	Suspended   bool   `json:"suspended"`
+	UserName    string `json:"userName"`
 }
 
 // SetApprovedRoutesRequestBody defines model for SetApprovedRoutesRequestBody.
@@ -347,6 +385,8 @@ type User struct {
 	ProfilePicUrl string    `json:"profilePicUrl"`
 	Provider      string    `json:"provider"`
 	ProviderId    string    `json:"providerId"`
+	ScimManaged   bool      `json:"scimManaged"`
+	Suspended     bool      `json:"suspended"`
 }
 
 // UserOutputBody defines model for UserOutputBody.
@@ -754,6 +794,20 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/preauthkey/expire (the `ExpirePreAuthKey` operationId).
 	ExpirePreAuthKey(ctx context.Context, body ExpirePreAuthKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListScimGroups List SCIM groups
+	//
+	// Lists the groups provisioned through SCIM, with the policy references that select them and their number of members.
+	//
+	// Corresponds with GET /api/v1/scim/group (the `ListScimGroups` operationId).
+	ListScimGroups(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReleaseScimGroup Release SCIM group
+	//
+	// Hands a SCIM group back to OIDC logins, for when SCIM provisioning is turned off: its SCIM memberships and external id are removed, and logins asserting the group in their groups claim grant it again from their next login. The group keeps its id and name, so policies referencing group:<name> keep working; references to its external id alias stop matching.
+	//
+	// Corresponds with POST /api/v1/scim/group/{id}/release (the `ReleaseScimGroup` operationId).
+	ReleaseScimGroup(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListScimTokens List SCIM tokens
 	//
 	// Corresponds with GET /api/v1/scim/token (the `ListScimTokens` operationId).
@@ -788,6 +842,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/scim/token/{id}/revoke (the `RevokeScimToken` operationId).
 	RevokeScimToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListScimUsers List SCIM users
+	//
+	// Lists the users provisioned through SCIM, with whether an OIDC login has been linked to each and whether it is suspended.
+	//
+	// Corresponds with GET /api/v1/scim/user (the `ListScimUsers` operationId).
+	ListScimUsers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUsers List users
 	//
@@ -1447,6 +1508,40 @@ func (c *Client) ExpirePreAuthKey(ctx context.Context, body ExpirePreAuthKeyJSON
 	return c.Client.Do(req)
 }
 
+// ListScimGroups List SCIM groups
+//
+// Lists the groups provisioned through SCIM, with the policy references that select them and their number of members.
+//
+// Corresponds with GET /api/v1/scim/group (the `ListScimGroups` operationId).
+func (c *Client) ListScimGroups(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListScimGroupsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReleaseScimGroup Release SCIM group
+//
+// Hands a SCIM group back to OIDC logins, for when SCIM provisioning is turned off: its SCIM memberships and external id are removed, and logins asserting the group in their groups claim grant it again from their next login. The group keeps its id and name, so policies referencing group:<name> keep working; references to its external id alias stop matching.
+//
+// Corresponds with POST /api/v1/scim/group/{id}/release (the `ReleaseScimGroup` operationId).
+func (c *Client) ReleaseScimGroup(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseScimGroupRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListScimTokens List SCIM tokens
 //
 // Corresponds with GET /api/v1/scim/token (the `ListScimTokens` operationId).
@@ -1522,6 +1617,23 @@ func (c *Client) DeleteScimToken(ctx context.Context, id string, reqEditors ...R
 // Corresponds with POST /api/v1/scim/token/{id}/revoke (the `RevokeScimToken` operationId).
 func (c *Client) RevokeScimToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeScimTokenRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListScimUsers List SCIM users
+//
+// Lists the users provisioned through SCIM, with whether an OIDC login has been linked to each and whether it is suspended.
+//
+// Corresponds with GET /api/v1/scim/user (the `ListScimUsers` operationId).
+func (c *Client) ListScimUsers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListScimUsersRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2658,6 +2770,67 @@ func NewExpirePreAuthKeyRequestWithBody(server string, contentType string, body 
 	return req, nil
 }
 
+// NewListScimGroupsRequest constructs an http.Request for the ListScimGroups method
+func NewListScimGroupsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/scim/group")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReleaseScimGroupRequest constructs an http.Request for the ReleaseScimGroup method
+func NewReleaseScimGroupRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uint64"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/scim/group/%s/release", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListScimTokensRequest constructs an http.Request for the ListScimTokens method
 func NewListScimTokensRequest(server string) (*http.Request, error) {
 	var err error
@@ -2786,6 +2959,33 @@ func NewRevokeScimTokenRequest(server string, id string) (*http.Request, error) 
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListScimUsersRequest constructs an http.Request for the ListScimUsers method
+func NewListScimUsersRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/scim/user")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -3302,6 +3502,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v1/preauthkey/expire (the `ExpirePreAuthKey` operationId).
 	ExpirePreAuthKeyWithResponse(ctx context.Context, body ExpirePreAuthKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*ExpirePreAuthKeyResponse, error)
 
+	// ListScimGroupsWithResponse List SCIM groups
+	//
+	// Lists the groups provisioned through SCIM, with the policy references that select them and their number of members.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/scim/group (the `ListScimGroups` operationId).
+	ListScimGroupsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListScimGroupsResponse, error)
+
+	// ReleaseScimGroupWithResponse Release SCIM group
+	//
+	// Hands a SCIM group back to OIDC logins, for when SCIM provisioning is turned off: its SCIM memberships and external id are removed, and logins asserting the group in their groups claim grant it again from their next login. The group keeps its id and name, so policies referencing group:<name> keep working; references to its external id alias stop matching.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/scim/group/{id}/release (the `ReleaseScimGroup` operationId).
+	ReleaseScimGroupWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ReleaseScimGroupResponse, error)
+
 	// ListScimTokensWithResponse List SCIM tokens
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -3342,6 +3560,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/scim/token/{id}/revoke (the `RevokeScimToken` operationId).
 	RevokeScimTokenWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RevokeScimTokenResponse, error)
+
+	// ListScimUsersWithResponse List SCIM users
+	//
+	// Lists the users provisioned through SCIM, with whether an OIDC login has been linked to each and whether it is suspended.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/scim/user (the `ListScimUsers` operationId).
+	ListScimUsersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListScimUsersResponse, error)
 
 	// ListUsersWithResponse List users
 	//
@@ -4579,6 +4806,102 @@ func (r ExpirePreAuthKeyResponse) ContentType() string {
 	return ""
 }
 
+type ListScimGroupsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ListScimGroupsOutputBody
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListScimGroupsResponse) GetJSON200() *ListScimGroupsOutputBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListScimGroupsResponse) GetApplicationproblemJSONDefault() *ErrorModel {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListScimGroupsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListScimGroupsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListScimGroupsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListScimGroupsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReleaseScimGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReleaseScimGroupOutputBody
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReleaseScimGroupResponse) GetJSON200() *ReleaseScimGroupOutputBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReleaseScimGroupResponse) GetApplicationproblemJSONDefault() *ErrorModel {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReleaseScimGroupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseScimGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseScimGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReleaseScimGroupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListScimTokensResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4765,6 +5088,54 @@ func (r RevokeScimTokenResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeScimTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListScimUsersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ListScimUsersOutputBody
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListScimUsersResponse) GetJSON200() *ListScimUsersOutputBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListScimUsersResponse) GetApplicationproblemJSONDefault() *ErrorModel {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListScimUsersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListScimUsersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListScimUsersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListScimUsersResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5463,6 +5834,36 @@ func (c *ClientWithResponses) ExpirePreAuthKeyWithResponse(ctx context.Context, 
 	return ParseExpirePreAuthKeyResponse(rsp)
 }
 
+// ListScimGroupsWithResponse List SCIM groups
+//
+// Lists the groups provisioned through SCIM, with the policy references that select them and their number of members.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/scim/group (the `ListScimGroups` operationId).
+func (c *ClientWithResponses) ListScimGroupsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListScimGroupsResponse, error) {
+	rsp, err := c.ListScimGroups(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListScimGroupsResponse(rsp)
+}
+
+// ReleaseScimGroupWithResponse Release SCIM group
+//
+// Hands a SCIM group back to OIDC logins, for when SCIM provisioning is turned off: its SCIM memberships and external id are removed, and logins asserting the group in their groups claim grant it again from their next login. The group keeps its id and name, so policies referencing group:<name> keep working; references to its external id alias stop matching.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/scim/group/{id}/release (the `ReleaseScimGroup` operationId).
+func (c *ClientWithResponses) ReleaseScimGroupWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ReleaseScimGroupResponse, error) {
+	rsp, err := c.ReleaseScimGroup(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseScimGroupResponse(rsp)
+}
+
 // ListScimTokensWithResponse List SCIM tokens
 //
 // Returns a wrapper object for the known response body format(s).
@@ -5532,6 +5933,21 @@ func (c *ClientWithResponses) RevokeScimTokenWithResponse(ctx context.Context, i
 		return nil, err
 	}
 	return ParseRevokeScimTokenResponse(rsp)
+}
+
+// ListScimUsersWithResponse List SCIM users
+//
+// Lists the users provisioned through SCIM, with whether an OIDC login has been linked to each and whether it is suspended.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/scim/user (the `ListScimUsers` operationId).
+func (c *ClientWithResponses) ListScimUsersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListScimUsersResponse, error) {
+	rsp, err := c.ListScimUsers(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListScimUsersResponse(rsp)
 }
 
 // ListUsersWithResponse List users
@@ -6424,6 +6840,72 @@ func ParseExpirePreAuthKeyResponse(rsp *http.Response) (*ExpirePreAuthKeyRespons
 	return response, nil
 }
 
+// ParseListScimGroupsResponse parses an HTTP response from a ListScimGroupsWithResponse call
+func ParseListScimGroupsResponse(rsp *http.Response) (*ListScimGroupsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListScimGroupsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ListScimGroupsOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReleaseScimGroupResponse parses an HTTP response from a ReleaseScimGroupWithResponse call
+func ParseReleaseScimGroupResponse(rsp *http.Response) (*ReleaseScimGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseScimGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReleaseScimGroupOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListScimTokensResponse parses an HTTP response from a ListScimTokensWithResponse call
 func ParseListScimTokensResponse(rsp *http.Response) (*ListScimTokensResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -6539,6 +7021,39 @@ func ParseRevokeScimTokenResponse(rsp *http.Response) (*RevokeScimTokenResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest EmptyScimTokenOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListScimUsersResponse parses an HTTP response from a ListScimUsersWithResponse call
+func ParseListScimUsersResponse(rsp *http.Response) (*ListScimUsersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListScimUsersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ListScimUsersOutputBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

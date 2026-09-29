@@ -35,7 +35,9 @@
           "name": "bob",
           "profilePicUrl": "",
           "provider": "",
-          "providerId": ""
+          "providerId": "",
+          "scimManaged": false,
+          "suspended": false
         }
       },
       "registerMethod": "REGISTER_METHOD_AUTH_KEY",

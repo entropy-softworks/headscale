@@ -31,6 +31,7 @@ func mapError(msg string, err error) error {
 		errors.Is(err, state.ErrNodeNotFound),
 		errors.Is(err, state.ErrNodeNotInNodeStore),
 		errors.Is(err, db.ErrUserNotFound),
+		errors.Is(err, db.ErrGroupNotFound),
 		errors.Is(err, db.ErrNodeNotFoundRegistrationCache),
 		errors.Is(err, state.ErrRegistrationExpired):
 		return huma.Error404NotFound(msg, err)

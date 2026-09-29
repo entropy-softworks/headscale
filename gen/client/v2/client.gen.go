@@ -639,7 +639,7 @@ type ClientInterface interface {
 
 	// RestoreUser Restore a user
 	//
-	// Restores a suspended user's access, without a new login.
+	// Restores a suspended user's access, without a new login. While SCIM is enabled, a user provisioned through SCIM is refused with 409: the identity provider owns their suspension, so reactivate them there.
 	//
 	// Requires the `users` OAuth scope (an admin API key is all-access).
 	//
@@ -648,7 +648,7 @@ type ClientInterface interface {
 
 	// SuspendUser Suspend a user
 	//
-	// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected.
+	// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected. For a user provisioned through SCIM the suspension is temporary: the identity provider's next write of the user's active state overrides it.
 	//
 	// Requires the `users` OAuth scope (an admin API key is all-access).
 	//
@@ -1191,7 +1191,7 @@ func (c *Client) GetUser(ctx context.Context, id string, reqEditors ...RequestEd
 
 // RestoreUser Restore a user
 //
-// Restores a suspended user's access, without a new login.
+// Restores a suspended user's access, without a new login. While SCIM is enabled, a user provisioned through SCIM is refused with 409: the identity provider owns their suspension, so reactivate them there.
 //
 // Requires the `users` OAuth scope (an admin API key is all-access).
 //
@@ -1210,7 +1210,7 @@ func (c *Client) RestoreUser(ctx context.Context, id string, reqEditors ...Reque
 
 // SuspendUser Suspend a user
 //
-// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected.
+// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected. For a user provisioned through SCIM the suspension is temporary: the identity provider's next write of the user's active state overrides it.
 //
 // Requires the `users` OAuth scope (an admin API key is all-access).
 //
@@ -2659,7 +2659,7 @@ type ClientWithResponsesInterface interface {
 
 	// RestoreUserWithResponse Restore a user
 	//
-	// Restores a suspended user's access, without a new login.
+	// Restores a suspended user's access, without a new login. While SCIM is enabled, a user provisioned through SCIM is refused with 409: the identity provider owns their suspension, so reactivate them there.
 	//
 	// Requires the `users` OAuth scope (an admin API key is all-access).
 	//
@@ -2670,7 +2670,7 @@ type ClientWithResponsesInterface interface {
 
 	// SuspendUserWithResponse Suspend a user
 	//
-	// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected.
+	// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected. For a user provisioned through SCIM the suspension is temporary: the identity provider's next write of the user's active state overrides it.
 	//
 	// Requires the `users` OAuth scope (an admin API key is all-access).
 	//
@@ -4267,6 +4267,8 @@ type RestoreUserResponse struct {
 	ApplicationproblemJSON403 *ErrorModel
 	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationproblemJSON404 *ErrorModel
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *ErrorModel
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ErrorModel
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -4291,6 +4293,11 @@ func (r RestoreUserResponse) GetApplicationproblemJSON403() *ErrorModel {
 // GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r RestoreUserResponse) GetApplicationproblemJSON404() *ErrorModel {
 	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RestoreUserResponse) GetApplicationproblemJSON409() *ErrorModel {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -4849,7 +4856,7 @@ func (c *ClientWithResponses) GetUserWithResponse(ctx context.Context, id string
 
 // RestoreUserWithResponse Restore a user
 //
-// Restores a suspended user's access, without a new login.
+// Restores a suspended user's access, without a new login. While SCIM is enabled, a user provisioned through SCIM is refused with 409: the identity provider owns their suspension, so reactivate them there.
 //
 // Requires the `users` OAuth scope (an admin API key is all-access).
 //
@@ -4866,7 +4873,7 @@ func (c *ClientWithResponses) RestoreUserWithResponse(ctx context.Context, id st
 
 // SuspendUserWithResponse Suspend a user
 //
-// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected.
+// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected. For a user provisioned through SCIM the suspension is temporary: the identity provider's next write of the user's active state overrides it.
 //
 // Requires the `users` OAuth scope (an admin API key is all-access).
 //
@@ -6204,6 +6211,13 @@ func ParseRestoreUserResponse(rsp *http.Response) (*RestoreUserResponse, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ErrorModel

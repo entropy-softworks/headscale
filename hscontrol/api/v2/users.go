@@ -129,7 +129,9 @@ func registerUsers(api huma.API, b Backend) {
 		Summary:     "Suspend a user",
 		Description: "Suspends a user: their devices stay connected but can " +
 			"exchange no traffic, and they can neither log in nor add " +
-			"devices until restored. Tagged devices are unaffected.",
+			"devices until restored. Tagged devices are unaffected. For a user " +
+			"provisioned through SCIM the suspension is temporary: the identity " +
+			"provider's next write of the user's active state overrides it.",
 		Tags:     usersTags,
 		Security: security,
 		Errors:   []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
@@ -142,11 +144,26 @@ func registerUsers(api huma.API, b Backend) {
 		Method:      http.MethodPost,
 		Path:        "/api/v2/users/{id}/restore",
 		Summary:     "Restore a user",
-		Description: "Restores a suspended user's access, without a new login.",
-		Tags:        usersTags,
-		Security:    security,
-		Errors:      []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Description: "Restores a suspended user's access, without a new login. " +
+			"While SCIM is enabled, a user provisioned through SCIM is refused with " +
+			"409: the identity provider owns their suspension, so reactivate them there.",
+		Tags:     usersTags,
+		Security: security,
+		Errors:   []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict},
 	}, scope.Users), func(ctx context.Context, in *userByIDInput) (*emptyOutput, error) {
+		view, err := lookupUser(b, in.UserID)
+		if err != nil {
+			return nil, err
+		}
+
+		// Suspending such a user stays allowed: it is a stopgap the
+		// provider's next write of active=true lifts. Restoring would
+		// override a deactivation the provider made, until its next write.
+		if b.Cfg != nil && b.Cfg.SCIM.Enabled && view.IsSCIMProvisioned() {
+			return nil, huma.Error409Conflict(
+				"user is managed by SCIM; reactivate it in your identity provider")
+		}
+
 		return setUserSuspended(b, in.UserID, b.State.RestoreUser)
 	})
 }

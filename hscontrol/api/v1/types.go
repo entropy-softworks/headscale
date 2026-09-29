@@ -30,6 +30,12 @@ type User struct {
 	// Groups are the qualified identity-provider groups (<name>@<domain>) the
 	// user is a member of, as policies reference them with group:.
 	Groups []string `json:"groups" nullable:"false"`
+	// ScimManaged reports that the user was provisioned (or adopted) through
+	// SCIM: the identity provider manages its lifecycle.
+	ScimManaged bool `json:"scimManaged"`
+	// Suspended reports that the user is suspended: their nodes can exchange
+	// no traffic and they can neither log in nor register nodes.
+	Suspended bool `json:"suspended"`
 }
 
 // userFromView converts a domain user into the v1 response shape, reading
@@ -52,5 +58,7 @@ func userFromView(u types.UserView) User {
 		Provider:      u.Provider(),
 		ProfilePicURL: u.ProfilePicURL(),
 		Groups:        append([]string{}, u.GroupNames()...),
+		ScimManaged:   u.IsSCIMProvisioned(),
+		Suspended:     u.IsSuspended(),
 	}
 }

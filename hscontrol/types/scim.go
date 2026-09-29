@@ -36,6 +36,12 @@ func (u *User) IsSCIMProvisioned() bool {
 	return u != nil && u.ProvisionedBy.Valid && u.ProvisionedBy.String == ProvisionedBySCIM
 }
 
+// IsSCIMProvisioned reports whether SCIM manages the user; see
+// [User.IsSCIMProvisioned].
+func (v UserView) IsSCIMProvisioned() bool {
+	return v.Valid() && v.ж.IsSCIMProvisioned()
+}
+
 // SCIMAttributes returns the user's SCIM-managed attributes, the starting
 // point for applying a SCIM PATCH.
 func (u *User) SCIMAttributes() SCIMUserAttributes {

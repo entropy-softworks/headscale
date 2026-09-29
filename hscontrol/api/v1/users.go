@@ -115,6 +115,11 @@ func registerUsers(api huma.API, b Backend) {
 			return nil, mapError("renaming user", err)
 		}
 
+		if b.scimManages(oldUser) {
+			return nil, huma.Error409Conflict(
+				"user is managed by SCIM; change it in your identity provider")
+		}
+
 		_, c, err := b.State.RenameUser(types.UserID(oldUser.ID), in.NewName)
 		if err != nil {
 			return nil, mapError("renaming user", err)
@@ -149,6 +154,12 @@ func registerUsers(api huma.API, b Backend) {
 		user, err := b.State.GetUserByID(id)
 		if err != nil {
 			return nil, mapError("deleting user", err)
+		}
+
+		if b.scimManages(user) {
+			return nil, huma.Error409Conflict(
+				"user is managed by SCIM; deprovision it in your identity provider, " +
+					"which deletes it here, or disable SCIM to manage it locally")
 		}
 
 		policyChanged, err := b.State.DeleteUser(types.UserID(user.ID))
@@ -220,6 +231,15 @@ func listUsersFiltered(b Backend, in *listUsersInput) ([]types.User, error) {
 	default:
 		return b.State.ListAllUsers()
 	}
+}
+
+// scimManages reports whether SCIM, while enabled, manages user. The admin
+// API does not rename or delete such users: the identity provider would
+// undo a rename's intent at the next sync (a linked user's name comes from
+// their login) and recreate a deleted user as a new, unlinked one. With SCIM
+// disabled nothing competes, and the admin manages them like any user.
+func (b Backend) scimManages(user *types.User) bool {
+	return b.Cfg != nil && b.Cfg.SCIM.Enabled && user.IsSCIMProvisioned()
 }
 
 func parseUserID(s string) (types.UserID, error) {
