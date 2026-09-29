@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/util/zlog/zf"
+	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -118,7 +120,9 @@ func preloadUserGroups(tx *gorm.DB, path string) *gorm.DB {
 // SetUserGroups makes groups, a list of qualified group names (see
 // [types.QualifyGroupName]), the complete set of the user's memberships from
 // source. Memberships from other sources are left untouched. Unknown groups
-// are created. It reports whether the user's memberships from source changed.
+// are created. For a source other than SCIM, names of SCIM-managed groups,
+// and SCIM groups' external names, are skipped: SCIM alone grants those. It
+// reports whether the user's memberships from source changed.
 func SetUserGroups(
 	tx *gorm.DB,
 	uid types.UserID,
@@ -128,6 +132,25 @@ func SetUserGroups(
 	groups = slices.Clone(groups)
 	slices.Sort(groups)
 	groups = slices.Compact(groups)
+
+	// SCIM is authoritative for the groups it manages: other sources
+	// never grant them, by name or external name.
+	if source != types.GroupSourceSCIM {
+		managed, err := scimManagedNames(tx, groups)
+		if err != nil {
+			return false, err
+		}
+
+		if len(managed) > 0 {
+			log.Debug().
+				Uint64(zf.UserID, uint64(uid)).
+				Str(zf.GroupSource, string(source)).
+				Strs(zf.GroupsSkipped, managed).
+				Msg("not granting SCIM-managed groups asserted by another source")
+
+			groups = slices.DeleteFunc(groups, func(g string) bool { return slices.Contains(managed, g) })
+		}
+	}
 
 	// Serialise concurrent syncs for the same user, such as two logins at
 	// once, so each replaces the other's set instead of merging with it.

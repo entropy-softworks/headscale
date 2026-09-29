@@ -218,6 +218,13 @@ const (
 	Type        = "type"
 )
 
+// SCIM provisioning fields.
+const (
+	GroupSource       = "group.source"
+	GroupsSkipped     = "groups.skipped"
+	MembershipsPurged = "group.memberships.purged"
+)
+
 // Component field for sub-loggers.
 const (
 	Component = "component"
