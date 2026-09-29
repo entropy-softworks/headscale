@@ -291,6 +291,22 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '' AND tags != 'null'
 				Migrate:  ensureGroupsTables,
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				// Record when a user is suspended (see
+				// [types.User.SuspendedAt]).
+				ID: "202609281300-user-suspended-at",
+				Migrate: func(tx *gorm.DB) error {
+					if !tx.Migrator().HasColumn(&types.User{}, "suspended_at") {
+						err := tx.Migrator().AddColumn(&types.User{}, "suspended_at")
+						if err != nil {
+							return fmt.Errorf("adding suspended_at to users: %w", err)
+						}
+					}
+
+					return nil
+				},
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 		},
 	)
 

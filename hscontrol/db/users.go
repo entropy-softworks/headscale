@@ -1,11 +1,13 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
@@ -237,4 +239,44 @@ func firstUser(tx *gorm.DB, query string, arg any) (*types.User, error) {
 	}
 
 	return &user, nil
+}
+
+// SetUserSuspended suspends the user at time at, or restores them when at is
+// the zero time, and reports whether their state changed. The column is
+// written explicitly: a struct update would skip the NULL that restores them.
+func SetUserSuspended(tx *gorm.DB, uid types.UserID, at time.Time) (bool, error) {
+	user, err := GetUserByID(tx, uid)
+	if err != nil {
+		return false, err
+	}
+
+	if user.IsSuspended() == !at.IsZero() {
+		return false, nil
+	}
+
+	value := sql.NullTime{Time: at.UTC(), Valid: !at.IsZero()}
+
+	err = tx.Model(&types.User{}).Where("id = ?", uint(uid)).UpdateColumn("suspended_at", value).Error
+	if err != nil {
+		return false, fmt.Errorf("setting suspended_at for user %d: %w", uid, err)
+	}
+
+	return true, nil
+}
+
+// ListSuspendedUserIDs returns the ids of all suspended users.
+func ListSuspendedUserIDs(tx *gorm.DB) ([]types.UserID, error) {
+	var ids []uint
+
+	err := tx.Model(&types.User{}).Where("suspended_at IS NOT NULL").Pluck("id", &ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("listing suspended users: %w", err)
+	}
+
+	out := make([]types.UserID, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, types.UserID(id))
+	}
+
+	return out, nil
 }

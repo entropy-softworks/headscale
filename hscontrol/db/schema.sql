@@ -15,7 +15,10 @@ CREATE TABLE users(
 
   created_at datetime,
   updated_at datetime,
-  deleted_at datetime
+  deleted_at datetime,
+  -- Set while the user is suspended (their nodes are cut off, and they can
+  -- neither log in nor register nodes); NULL otherwise.
+  suspended_at datetime
 );
 CREATE INDEX idx_users_deleted_at ON users(deleted_at);
 

@@ -159,7 +159,7 @@ func TestSnapshotFromNodes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			nodes, peersFunc := tt.setupFunc()
-			snapshot := snapshotFromNodes(nodes, peersFunc, nil, false, false)
+			snapshot := snapshotFromNodes(nodes, peersFunc, nil, false, false, nil)
 			tt.validate(t, nodes, snapshot)
 		})
 	}
@@ -1527,7 +1527,7 @@ func BenchmarkSnapshotPayloadDense(b *testing.B) {
 		nodes[id] = createTestNode(id, uint(i), "user", "node") //nolint:gosec // bounded benchmark node count
 	}
 
-	initial := snapshotFromNodes(nodes, allowAllPeersFunc, nil, false, false)
+	initial := snapshotFromNodes(nodes, allowAllPeersFunc, nil, false, false, nil)
 	n := nodes[1]
 	n.LastSeen = new(time.Now())
 	nodes[1] = n
@@ -1539,7 +1539,7 @@ func BenchmarkSnapshotPayloadDense(b *testing.B) {
 		b.ResetTimer()
 
 		for b.Loop() {
-			next := snapshotFromNodes(nodes, allowAllPeersFunc, &previous, true, true)
+			next := snapshotFromNodes(nodes, allowAllPeersFunc, &previous, true, true, nil)
 			previous = next
 		}
 	})
@@ -1549,7 +1549,7 @@ func BenchmarkSnapshotPayloadDense(b *testing.B) {
 		b.ResetTimer()
 
 		for b.Loop() {
-			snapshotFromNodes(nodes, allowAllPeersFunc, nil, false, false)
+			snapshotFromNodes(nodes, allowAllPeersFunc, nil, false, false, nil)
 		}
 	})
 }

@@ -483,6 +483,12 @@ func (ns *noiseServer) sshAction(
 		AllowRemotePortForwarding: true,
 	}
 
+	// A suspended user's node gets no SSH session, neither by auto-approval
+	// within the check period nor by a new approval.
+	if src, ok := ns.headscale.state.GetNodeByID(srcNodeID); ok && ns.headscale.state.IsNodeSuspended(src) {
+		return &tailcfg.SSHAction{Reject: true}, nil
+	}
+
 	// Look up check params from the server's own policy rather than
 	// trusting URL parameters, which the client could tamper with.
 	// local_user only narrows which rule applies, and it comes from dst,

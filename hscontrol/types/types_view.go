@@ -122,6 +122,12 @@ func (v UserView) ProfilePicURL() string { return v.ж.ProfilePicURL }
 // read the groups the policy resolves.
 func (v UserView) Memberships() views.Slice[UserGroup] { return views.SliceOf(v.ж.Memberships) }
 
+// SuspendedAt is when the user was suspended, or NULL if they are not.
+// A suspended user's nodes are cut off from all peers, and the user can
+// neither log in nor register nodes, until they are restored. Written
+// only through the db package's SetUserSuspended.
+func (v UserView) SuspendedAt() sql.NullTime { return v.ж.SuspendedAt }
+
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _UserViewNeedsRegeneration = User(struct {
 	gorm.Model
@@ -132,6 +138,7 @@ var _UserViewNeedsRegeneration = User(struct {
 	Provider           string
 	ProfilePicURL      string
 	Memberships        []UserGroup
+	SuspendedAt        sql.NullTime
 }{})
 
 // View returns a read-only view of Node.

@@ -101,6 +101,17 @@ type User struct {
 	// preloaded for reads only (see [UserGroup]); use [User.GroupNames] to
 	// read the groups the policy resolves.
 	Memberships []UserGroup `gorm:"foreignKey:UserID;->;-:migration"`
+
+	// SuspendedAt is when the user was suspended, or NULL if they are not.
+	// A suspended user's nodes are cut off from all peers, and the user can
+	// neither log in nor register nodes, until they are restored. Written
+	// only through the db package's SetUserSuspended.
+	SuspendedAt sql.NullTime
+}
+
+// IsSuspended reports whether the user is suspended.
+func (u *User) IsSuspended() bool {
+	return u != nil && u.SuspendedAt.Valid
 }
 
 // GroupNames returns the sorted, de-duplicated qualified names of the
@@ -187,6 +198,11 @@ func (v UserView) Display() string {
 	}
 
 	return v.ж.Display()
+}
+
+// IsSuspended reports whether the user is suspended; see [User.IsSuspended].
+func (v UserView) IsSuspended() bool {
+	return v.Valid() && v.ж.IsSuspended()
 }
 
 // GroupNames returns the user's identity-provider groups via the view; see

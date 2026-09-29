@@ -123,6 +123,12 @@ type NodeStore struct {
 
 	batchSize    int
 	batchTimeout time.Duration
+
+	// suspended holds the ids of suspended users. Their untagged nodes are
+	// left out of peer computation and route election, so they have no
+	// peers, are no one's peer, and cannot serve routes. It is replaced
+	// wholesale by SetSuspendedUsers and read when a snapshot is built.
+	suspended atomic.Pointer[map[types.UserID]struct{}]
 }
 
 func NewNodeStore(allNodes types.Nodes, peersFunc PeersFunc, batchSize int, batchTimeout time.Duration) *NodeStore {
@@ -131,7 +137,7 @@ func NewNodeStore(allNodes types.Nodes, peersFunc PeersFunc, batchSize int, batc
 		nodes[n.ID] = *n
 	}
 
-	snap := snapshotFromNodes(nodes, peersFunc, nil, false, false)
+	snap := snapshotFromNodes(nodes, peersFunc, nil, false, false, nil)
 
 	store := &NodeStore{
 		peersFunc:    peersFunc,
@@ -615,7 +621,7 @@ func (s *NodeStore) applyBatch(batch []work) {
 		nodeStoreSnapshotBuilds.WithLabelValues("reused").Inc()
 	}
 
-	newSnap := snapshotFromNodes(nodes, s.peersFunc, prev, !relationChanged, !electionChanged)
+	newSnap := snapshotFromNodes(nodes, s.peersFunc, prev, !relationChanged, !electionChanged, s.suspendedUsers())
 	s.data.Store(&newSnap)
 
 	// Update node count gauge
@@ -702,6 +708,7 @@ func snapshotFromNodes(
 	peersFunc PeersFunc,
 	prev *Snapshot,
 	reusePeers, reuseRoutes bool,
+	suspended map[types.UserID]struct{},
 ) Snapshot {
 	timer := prometheus.NewTimer(nodeStoreSnapshotBuildDuration)
 	defer timer.ObserveDuration()
@@ -709,10 +716,31 @@ func snapshotFromNodes(
 	allNodes := make([]types.NodeView, 0, len(nodes))
 	nodeViewsByID := make(map[types.NodeID]types.NodeView, len(nodes))
 
+	// Nodes of suspended users take part in neither peer computation nor
+	// route election. Cutting adjacency here, rather than in the policy,
+	// holds whatever the policy allows: a wildcard source still covers
+	// their addresses.
+	peerCandidates := make([]types.NodeView, 0, len(nodes))
+	routeNodes := nodes
+
+	if len(suspended) > 0 {
+		routeNodes = make(map[types.NodeID]types.Node, len(nodes))
+	}
+
 	for _, n := range nodes {
 		nv := n.View()
 		allNodes = append(allNodes, nv)
 		nodeViewsByID[n.ID] = nv
+
+		if nodeOfSuspendedUser(&n, suspended) {
+			continue
+		}
+
+		peerCandidates = append(peerCandidates, nv)
+
+		if len(suspended) > 0 {
+			routeNodes[n.ID] = n
+		}
 	}
 
 	var (
@@ -730,7 +758,7 @@ func snapshotFromNodes(
 			prevRoutes = prev.routes
 		}
 
-		routes, isPrimaryRoute = electPrimaryRoutes(nodes, prevRoutes)
+		routes, isPrimaryRoute = electPrimaryRoutes(routeNodes, prevRoutes)
 	}
 
 	var peerIDsByNode map[types.NodeID][]types.NodeID
@@ -739,7 +767,7 @@ func snapshotFromNodes(
 		peerIDsByNode = prev.peersByNode
 	} else {
 		peersTimer := prometheus.NewTimer(nodeStorePeersCalculationDuration)
-		peerIDsByNode = peersFunc(allNodes)
+		peerIDsByNode = peersFunc(peerCandidates)
 
 		peersTimer.ObserveDuration()
 	}
@@ -776,6 +804,55 @@ func snapshotFromNodes(
 	}
 
 	return newSnap
+}
+
+// nodeOfSuspendedUser reports whether n is an untagged node owned by a user in
+// suspended. Tagged nodes are owned by their tags and are never suspended.
+func nodeOfSuspendedUser(n *types.Node, suspended map[types.UserID]struct{}) bool {
+	if len(suspended) == 0 || n.IsTagged() || n.UserID == nil {
+		return false
+	}
+
+	_, ok := suspended[types.UserID(*n.UserID)]
+
+	return ok
+}
+
+// suspendedUsers returns the current set of suspended users, or nil.
+func (s *NodeStore) suspendedUsers() map[types.UserID]struct{} {
+	if set := s.suspended.Load(); set != nil {
+		return *set
+	}
+
+	return nil
+}
+
+// SetSuspendedUsers replaces the set of suspended users and rebuilds the peer
+// maps and route election, so the change takes effect before it returns.
+func (s *NodeStore) SetSuspendedUsers(ids []types.UserID) {
+	set := make(map[types.UserID]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+
+	s.suspended.Store(&set)
+	s.RebuildPeerMaps()
+}
+
+// IsSuspended reports whether node belongs to a suspended user.
+func (s *NodeStore) IsSuspended(node types.NodeView) bool {
+	if !node.Valid() || node.IsTagged() {
+		return false
+	}
+
+	uid, ok := node.UserID().GetOk()
+	if !ok {
+		return false
+	}
+
+	_, suspended := s.suspendedUsers()[types.UserID(uid)]
+
+	return suspended
 }
 
 // onlineAdvertisers maps each non-exit prefix to the IDs of online nodes

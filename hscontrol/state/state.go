@@ -370,6 +370,12 @@ func NewState(cfg *types.Config) (*State, error) {
 		return nil, fmt.Errorf("initializing policy manager: %w", err)
 	}
 
+	// Read before the NodeStore starts, so an error leaks none of its goroutines.
+	suspended, err := hsdb.ListSuspendedUserIDs(db.DB)
+	if err != nil {
+		return nil, fmt.Errorf("loading suspended users: %w", err)
+	}
+
 	// Apply defaults for [NodeStore] batch configuration if not set.
 	// This ensures tests that create Config directly (without viper) still work.
 	batchSize := cmp.Or(cfg.Tuning.NodeStoreBatchSize, defaultNodeStoreBatchSize)
@@ -378,6 +384,10 @@ func NewState(cfg *types.Config) (*State, error) {
 
 	nodeStore := NewNodeStore(nodes, policyPeersFunc(polMan), batchSize, batchTimeout)
 	nodeStore.Start()
+
+	if len(suspended) > 0 {
+		nodeStore.SetSuspendedUsers(suspended)
+	}
 
 	s := &State{
 		cfg: cfg,
@@ -1417,6 +1427,11 @@ func (s *State) ExpireExpiredNodes(lastCheck time.Time) (time.Time, []change.Cha
 
 // SSHPolicy returns the SSH access policy for a node.
 func (s *State) SSHPolicy(node types.NodeView) (*tailcfg.SSHPolicy, error) {
+	// A suspended user's node accepts no SSH at all.
+	if s.nodeStore.IsSuspended(node) {
+		return &tailcfg.SSHPolicy{}, nil
+	}
+
 	return s.polMan.SSHPolicy(s.cfg.ServerURL, node)
 }
 
@@ -1436,6 +1451,13 @@ func (s *State) Filter() ([]tailcfg.FilterRule, []matcher.Match) {
 
 // FilterForNode returns filter rules for a specific node, handling autogroup:self per-node.
 func (s *State) FilterForNode(node types.NodeView) ([]tailcfg.FilterRule, error) {
+	// A suspended user's node accepts no traffic. It has no peers either
+	// (see [NodeStore.SetSuspendedUsers]); the empty filter also denies
+	// anything that reaches it by other means.
+	if s.nodeStore.IsSuspended(node) {
+		return []tailcfg.FilterRule{}, nil
+	}
+
 	return s.polMan.FilterForNode(node)
 }
 
@@ -2656,6 +2678,10 @@ func (s *State) HandleNodeFromAuthPath(
 		return types.NodeView{}, s.policyChangeSince(genBefore), fmt.Errorf("finding user: %w", err)
 	}
 
+	if user.IsSuspended() {
+		return types.NodeView{}, s.policyChangeSince(genBefore), fmt.Errorf("%w: user %d", ErrUserSuspended, userID)
+	}
+
 	regData := regEntry.RegistrationData()
 
 	// Hostname was already validated/normalised at producer time. Build
@@ -2966,6 +2992,13 @@ func (s *State) HandleNodeFromPreAuthKey(
 	pak, err := s.GetPreAuthKey(regReq.Auth.AuthKey)
 	if err != nil {
 		return types.NodeView{}, s.policyChangeSince(genBefore), err
+	}
+
+	// A suspended user's keys register nothing, not even a restart of an
+	// existing node. Tagged keys create tag-owned nodes, which suspension
+	// does not affect.
+	if len(pak.Tags) == 0 && pak.User.IsSuspended() {
+		return types.NodeView{}, s.policyChangeSince(genBefore), fmt.Errorf("%w: pre-auth key owner %d", ErrUserSuspended, pak.User.ID)
 	}
 
 	// A pre-auth key node's tags come from the key, never from RequestTags.
@@ -3400,6 +3433,95 @@ func reauthChange(node types.NodeView, keysOnly, policyChanged bool) change.Chan
 func onlyKeysChanged(before, after types.NodeView, now time.Time) bool {
 	return before.IsExpiredAt(now) == after.IsExpiredAt(now) &&
 		peerHostinfoEqual(before.Hostinfo(), after.Hostinfo())
+}
+
+// ErrUserSuspended is returned when a suspended user tries to log in, register
+// a node, or approve an SSH session.
+var ErrUserSuspended = errors.New("user is suspended")
+
+// SuspendUser suspends the user: their untagged nodes lose all peers and
+// accept no traffic or SSH, and the user can neither log in, register nodes,
+// nor approve SSH sessions until restored. Nodes, keys and memberships are
+// kept, so [State.RestoreUser] brings everything back without a new login.
+// Tagged nodes are unaffected. It returns the change to broadcast, empty if
+// the user was already suspended.
+func (s *State) SuspendUser(userID types.UserID) (change.Change, error) {
+	return s.setUserSuspended(userID, time.Now())
+}
+
+// RestoreUser lifts a suspension set by [State.SuspendUser]. It returns the
+// change to broadcast, empty if the user was not suspended.
+func (s *State) RestoreUser(userID types.UserID) (change.Change, error) {
+	return s.setUserSuspended(userID, time.Time{})
+}
+
+func (s *State) setUserSuspended(userID types.UserID, at time.Time) (change.Change, error) {
+	changed, err := hsdb.Write(s.db.DB, func(tx *gorm.DB) (bool, error) {
+		return hsdb.SetUserSuspended(tx, userID, at)
+	})
+	if err != nil {
+		return change.Change{}, err
+	}
+
+	if !changed {
+		return change.Change{}, nil
+	}
+
+	suspended, err := hsdb.ListSuspendedUserIDs(s.db.DB)
+	if err != nil {
+		return change.Change{}, err
+	}
+
+	// Cuts (or restores) the nodes' peers and routes before returning.
+	s.nodeStore.SetSuspendedUsers(suspended)
+
+	err = s.refreshNodeStoreUser(userID)
+	if err != nil {
+		return change.Change{}, err
+	}
+
+	if !at.IsZero() {
+		s.clearSSHCheckAuthForUser(userID)
+	}
+
+	_, err = s.updatePolicyManagerUsers()
+	if err != nil {
+		return change.Change{}, fmt.Errorf("updating policy manager after suspension change: %w", err)
+	}
+
+	log.Info().
+		Uint64(zf.UserID, uint64(userID)).
+		Bool(zf.UserSuspended, !at.IsZero()).
+		Msg("user suspension changed")
+
+	// Suspension changes no policy hash, so the policy manager reports no
+	// change of its own: every node must recompute its peers and filter.
+	return change.PolicyChange(), nil
+}
+
+// clearSSHCheckAuthForUser forgets SSH check-mode approvals from the user's
+// nodes, so a suspended user cannot keep using an earlier approval.
+func (s *State) clearSSHCheckAuthForUser(userID types.UserID) {
+	nodes := s.nodeStore.ListNodesByUser(userID)
+
+	owned := make(map[types.NodeID]struct{}, nodes.Len())
+	for _, n := range nodes.All() {
+		owned[n.ID()] = struct{}{}
+	}
+
+	s.sshCheckMu.Lock()
+	defer s.sshCheckMu.Unlock()
+
+	for pair := range s.sshCheckAuth {
+		if _, ok := owned[pair.Src]; ok {
+			delete(s.sshCheckAuth, pair)
+		}
+	}
+}
+
+// IsNodeSuspended reports whether node belongs to a suspended user.
+func (s *State) IsNodeSuspended(node types.NodeView) bool {
+	return s.nodeStore.IsSuspended(node)
 }
 
 // pruneOIDCGroupMemberships removes OIDC group memberships that the current

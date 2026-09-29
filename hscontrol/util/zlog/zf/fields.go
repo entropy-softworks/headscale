@@ -55,13 +55,14 @@ const (
 
 // User fields.
 const (
-	UserID       = "user.id"
-	UserName     = "user.name"
-	UserDisplay  = "user.display"
-	UserProvider = "user.provider"
-	UserCount    = "user.count"
-	OldUser      = "old.user"
-	NewUser      = "new.user"
+	UserID        = "user.id"
+	UserName      = "user.name"
+	UserDisplay   = "user.display"
+	UserProvider  = "user.provider"
+	UserCount     = "user.count"
+	OldUser       = "old.user"
+	NewUser       = "new.user"
+	UserSuspended = "user.suspended"
 )
 
 // Identity-provider group fields.

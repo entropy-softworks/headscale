@@ -17,6 +17,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/juanfont/headscale/hscontrol/db"
+	hsstate "github.com/juanfont/headscale/hscontrol/state"
 	"github.com/juanfont/headscale/hscontrol/templates"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
@@ -384,6 +385,13 @@ func (a *AuthProviderOIDC) OIDCCallbackHandler(
 			"could not create or update user",
 			err,
 		))
+
+		return
+	}
+
+	// A suspended user may neither register nodes nor approve SSH sessions.
+	if user.IsSuspended() {
+		httpUserError(writer, NewHTTPError(http.StatusForbidden, "your account is suspended", hsstate.ErrUserSuspended))
 
 		return
 	}

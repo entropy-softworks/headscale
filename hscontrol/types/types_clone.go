@@ -37,6 +37,7 @@ var _UserCloneNeedsRegeneration = User(struct {
 	Provider           string
 	ProfilePicURL      string
 	Memberships        []UserGroup
+	SuspendedAt        sql.NullTime
 }{})
 
 // Clone makes a deep copy of Node.
