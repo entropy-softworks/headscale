@@ -75,6 +75,13 @@ func (s *State) CreateSCIMUser(attrs types.SCIMUserAttributes, adopt bool) (*typ
 
 	uid := types.UserID(user.ID)
 
+	if adopted {
+		// Adoption hands an existing account and its nodes to the
+		// directory: make it visible in the logs.
+		log.Warn().Uint64(zf.UserID, uint64(uid)).Str(zf.UserName, attrs.UserName).
+			Msg("scim create adopted an existing OIDC user")
+	}
+
 	c, err := s.afterSCIMUserWrite(uid, adopted, suspensionChanged, attrs.Active)
 	if err != nil {
 		return nil, change.Change{}, err

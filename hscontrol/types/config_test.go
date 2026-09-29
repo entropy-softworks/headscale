@@ -1712,7 +1712,7 @@ func TestSCIMConfigValidation(t *testing.T) {
 		{
 			name:       "disabled by default",
 			withOIDC:   true,
-			wantConfig: SCIMConfig{GroupsDomain: "oidc.example", LinkBy: SCIMLinkByEmail, LinkClaim: "sub", AdoptExistingUsers: true},
+			wantConfig: SCIMConfig{GroupsDomain: "oidc.example", LinkBy: SCIMLinkByEmail, LinkClaim: "sub"},
 		},
 		{
 			name:     "enabled with groups domain",
@@ -1723,7 +1723,7 @@ scim:
   groups_domain: Example.com`,
 			wantConfig: SCIMConfig{
 				Enabled: true, GroupsDomain: "example.com", LinkBy: SCIMLinkByEmail,
-				LinkClaim: "sub", AdoptExistingUsers: true,
+				LinkClaim: "sub",
 			},
 		},
 		{
@@ -1734,11 +1734,11 @@ scim:
   enabled: true
   link_by: external_id
   link_claim: oid
-  adopt_existing_users: false
+  adopt_existing_users: true
   require_provisioning: true`,
 			wantConfig: SCIMConfig{
 				Enabled: true, GroupsDomain: "oidc.example", LinkBy: SCIMLinkByExternalID,
-				LinkClaim: "oid", RequireProvisioning: true,
+				LinkClaim: "oid", AdoptExistingUsers: true, RequireProvisioning: true,
 			},
 		},
 		{

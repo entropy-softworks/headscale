@@ -443,7 +443,10 @@ type SCIMConfig struct {
 
 	// AdoptExistingUsers lets a SCIM create take over an existing OIDC user
 	// whose stored (verified) email equals the userName, instead of refusing
-	// it as a conflict.
+	// it as a conflict. Off by default: it hands an existing account, with
+	// its nodes, to whoever controls the identity provider's directory.
+	// Operators enable it to bring an existing tailnet under SCIM without
+	// duplicating the users who have already logged in.
 	AdoptExistingUsers bool
 
 	// RequireProvisioning refuses (403) OIDC logins from users the identity
@@ -781,7 +784,7 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("scim.enabled", false)
 	viper.SetDefault("scim.link_by", SCIMLinkByEmail)
 	viper.SetDefault("scim.link_claim", "sub")
-	viper.SetDefault("scim.adopt_existing_users", true)
+	viper.SetDefault("scim.adopt_existing_users", false)
 	viper.SetDefault("scim.require_provisioning", false)
 
 	viper.SetDefault("logtail.enabled", false)
