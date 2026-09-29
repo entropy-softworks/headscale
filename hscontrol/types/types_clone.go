@@ -38,6 +38,14 @@ var _UserCloneNeedsRegeneration = User(struct {
 	ProfilePicURL      string
 	Memberships        []UserGroup
 	SuspendedAt        sql.NullTime
+	ProvisionedBy      sql.NullString
+	SCIMUserName       sql.NullString
+	SCIMUserNameKey    sql.NullString
+	SCIMEmail          string
+	SCIMDisplayName    string
+	ExternalID         sql.NullString
+	GivenName          string
+	FamilyName         string
 }{})
 
 // Clone makes a deep copy of Node.

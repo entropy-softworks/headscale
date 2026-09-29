@@ -107,6 +107,37 @@ type User struct {
 	// neither log in nor register nodes, until they are restored. Written
 	// only through the db package's SetUserSuspended.
 	SuspendedAt sql.NullTime
+
+	// ProvisionedBy names the system that manages the user's lifecycle:
+	// [ProvisionedBySCIM] for users created, or adopted, by the SCIM
+	// endpoint; NULL for users created by a login or the CLI.
+	ProvisionedBy sql.NullString
+
+	// SCIMUserName is the SCIM userName, as the provisioning client sent it,
+	// and SCIMUserNameKey its case-folded form (strings.ToLower), which is
+	// unique and what userName lookups compare. Folding in Go rather than
+	// with SQL lower() keeps the comparison the same on SQLite (ASCII only)
+	// and Postgres (Unicode). The userName is kept apart from Name, which
+	// OIDC logins overwrite with the preferred_username claim, so it
+	// round-trips unchanged to the client. See [SCIMUserAttributes].
+	SCIMUserName    sql.NullString `gorm:"column:scim_user_name"`
+	SCIMUserNameKey sql.NullString `gorm:"column:scim_user_name_key"`
+
+	// SCIMEmail and SCIMDisplayName are the email and displayName the
+	// provisioning client sent. They are what the SCIM endpoint returns: for
+	// a user linked to a login, Email and DisplayName belong to the login's
+	// claims and SCIM never writes them.
+	SCIMEmail       string `gorm:"column:scim_email"`
+	SCIMDisplayName string `gorm:"column:scim_display_name"`
+
+	// ExternalID is the provisioning client's identifier for the user (the
+	// SCIM externalId). Unique when set; compared exactly.
+	ExternalID sql.NullString
+
+	// GivenName and FamilyName are the SCIM name.givenName and
+	// name.familyName, stored so they round-trip to the client.
+	GivenName  string
+	FamilyName string
 }
 
 // IsSuspended reports whether the user is suspended.
@@ -117,15 +148,16 @@ func (u *User) IsSuspended() bool {
 // GroupNames returns the sorted, de-duplicated qualified names of the
 // identity-provider groups the user is a member of.
 func (u *User) GroupNames() []string {
-	return groupNames(u.Memberships)
+	return groupNames(u.Memberships, false)
 }
 
-// InGroup reports whether the user is a member of the identity-provider group
-// with the qualified name. Unlike [User.GroupNames] it does not allocate, as
-// the policy calls it for every user and group reference on each compile.
+// InGroup reports whether the user is a member of an identity-provider group
+// that the qualified name selects, by its name or its external name (see
+// [Group.Matches]). Unlike [User.GroupNames] it does not allocate, as the
+// policy calls it for every user and group reference on each compile.
 func (u *User) InGroup(name string) bool {
 	for i := range u.Memberships {
-		if u.Memberships[i].Group.Name == name {
+		if u.Memberships[i].Group.Matches(name) {
 			return true
 		}
 	}
@@ -143,14 +175,14 @@ func (u *User) StringID() string {
 
 // PolicyEqual reports whether the policy would resolve both users the same
 // way: the same row, the same name, email, and provider identity that user
-// aliases match on, and the same identity-provider groups that group aliases
-// match on.
+// aliases match on, and the same identity-provider group names and external
+// names that group aliases match on (see [User.InGroup]).
 func (u *User) PolicyEqual(o *User) bool {
 	return u.ID == o.ID &&
 		u.Name == o.Name &&
 		u.Email == o.Email &&
 		u.ProviderIdentifier == o.ProviderIdentifier &&
-		slices.Equal(u.GroupNames(), o.GroupNames())
+		slices.Equal(groupNames(u.Memberships, true), groupNames(o.Memberships, true))
 }
 
 // TypedID returns a pointer to the user's ID as a [UserID] type.

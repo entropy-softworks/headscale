@@ -18,9 +18,27 @@ CREATE TABLE users(
   deleted_at datetime,
   -- Set while the user is suspended (their nodes are cut off, and they can
   -- neither log in nor register nodes); NULL otherwise.
-  suspended_at datetime
+  suspended_at datetime,
+  -- 'scim' for users created or adopted by the SCIM endpoint; NULL for users
+  -- created by a login or the CLI.
+  provisioned_by text,
+  -- The SCIM userName, verbatim, and its case-folded key (folded in Go, so
+  -- SQLite and Postgres compare alike), unique. Kept apart from name, which
+  -- OIDC logins overwrite.
+  scim_user_name text,
+  scim_user_name_key text,
+  -- The email and displayName sent by SCIM. For users linked to a login, the
+  -- login owns email and display_name; SCIM's values are kept here.
+  scim_email text,
+  scim_display_name text,
+  -- The provisioning client's identifier (SCIM externalId), unique when set.
+  external_id text,
+  given_name text,
+  family_name text
 );
 CREATE INDEX idx_users_deleted_at ON users(deleted_at);
+CREATE UNIQUE INDEX idx_users_external_id ON users(external_id) WHERE external_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_users_scim_user_name_key ON users(scim_user_name_key) WHERE scim_user_name_key IS NOT NULL;
 
 
 -- The following three UNIQUE indexes work together to enforce the user identity model:
@@ -103,15 +121,24 @@ CREATE TABLE nodes(
 CREATE INDEX idx_nodes_auth_key_id ON nodes(auth_key_id);
 
 -- Groups asserted by an identity provider, referenced from the policy as
--- group:<name>. name is the qualified, lowercased <name>@<domain>.
+-- group:<name> or group:<external_name>. name is the qualified, lowercased
+-- <name>@<domain>; external_name is external_id qualified the same way.
+-- source is the system owning the row ('oidc' logins create groups on
+-- demand; 'scim' manages its own).
 CREATE TABLE groups(
   id integer PRIMARY KEY AUTOINCREMENT,
   name text NOT NULL,
+  display_name text,
+  external_id text,
+  external_name text,
+  source text NOT NULL DEFAULT 'oidc',
 
   created_at datetime,
   updated_at datetime
 );
 CREATE UNIQUE INDEX idx_groups_name ON groups(name);
+CREATE UNIQUE INDEX idx_groups_external_id ON groups(external_id) WHERE external_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_groups_external_name ON groups(external_name) WHERE external_name IS NOT NULL;
 
 -- A user's group memberships, per asserting source (e.g. 'oidc'). Each source
 -- owns its rows; syncing one source never touches another's.

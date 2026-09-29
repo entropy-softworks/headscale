@@ -128,6 +128,37 @@ func (v UserView) Memberships() views.Slice[UserGroup] { return views.SliceOf(v.
 // only through the db package's SetUserSuspended.
 func (v UserView) SuspendedAt() sql.NullTime { return v.ж.SuspendedAt }
 
+// ProvisionedBy names the system that manages the user's lifecycle:
+// [ProvisionedBySCIM] for users created, or adopted, by the SCIM
+// endpoint; NULL for users created by a login or the CLI.
+func (v UserView) ProvisionedBy() sql.NullString { return v.ж.ProvisionedBy }
+
+// SCIMUserName is the SCIM userName, as the provisioning client sent it,
+// and SCIMUserNameKey its case-folded form (strings.ToLower), which is
+// unique and what userName lookups compare. Folding in Go rather than
+// with SQL lower() keeps the comparison the same on SQLite (ASCII only)
+// and Postgres (Unicode). The userName is kept apart from Name, which
+// OIDC logins overwrite with the preferred_username claim, so it
+// round-trips unchanged to the client. See [SCIMUserAttributes].
+func (v UserView) SCIMUserName() sql.NullString    { return v.ж.SCIMUserName }
+func (v UserView) SCIMUserNameKey() sql.NullString { return v.ж.SCIMUserNameKey }
+
+// SCIMEmail and SCIMDisplayName are the email and displayName the
+// provisioning client sent. They are what the SCIM endpoint returns: for
+// a user linked to a login, Email and DisplayName belong to the login's
+// claims and SCIM never writes them.
+func (v UserView) SCIMEmail() string       { return v.ж.SCIMEmail }
+func (v UserView) SCIMDisplayName() string { return v.ж.SCIMDisplayName }
+
+// ExternalID is the provisioning client's identifier for the user (the
+// SCIM externalId). Unique when set; compared exactly.
+func (v UserView) ExternalID() sql.NullString { return v.ж.ExternalID }
+
+// GivenName and FamilyName are the SCIM name.givenName and
+// name.familyName, stored so they round-trip to the client.
+func (v UserView) GivenName() string  { return v.ж.GivenName }
+func (v UserView) FamilyName() string { return v.ж.FamilyName }
+
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _UserViewNeedsRegeneration = User(struct {
 	gorm.Model
@@ -139,6 +170,14 @@ var _UserViewNeedsRegeneration = User(struct {
 	ProfilePicURL      string
 	Memberships        []UserGroup
 	SuspendedAt        sql.NullTime
+	ProvisionedBy      sql.NullString
+	SCIMUserName       sql.NullString
+	SCIMUserNameKey    sql.NullString
+	SCIMEmail          string
+	SCIMDisplayName    string
+	ExternalID         sql.NullString
+	GivenName          string
+	FamilyName         string
 }{})
 
 // View returns a read-only view of Node.

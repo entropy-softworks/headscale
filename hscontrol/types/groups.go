@@ -1,6 +1,7 @@
 package types
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
@@ -14,8 +15,15 @@ import (
 // another system (e.g. a future SCIM endpoint).
 type GroupSource string
 
-// GroupSourceOIDC marks memberships taken from the OIDC groups claim at login.
-const GroupSourceOIDC GroupSource = "oidc"
+const (
+	// GroupSourceOIDC marks memberships taken from the OIDC groups claim at
+	// login, and groups created by them.
+	GroupSourceOIDC GroupSource = "oidc"
+
+	// GroupSourceSCIM marks memberships, and groups, provisioned through the
+	// SCIM endpoint.
+	GroupSourceSCIM GroupSource = "scim"
+)
 
 var (
 	ErrGroupNameEmpty        = errors.New("group name is empty")
@@ -30,11 +38,33 @@ const maxGroupNameLength = 255
 
 // Group is a group of users asserted by an identity provider. Policies refer
 // to it as `group:<Name>`, where Name is the qualified, lowercased
-// `<name>@<domain>` identifier (see [QualifyGroupName]). Groups defined in the
-// policy file are not stored here.
+// `<name>@<domain>` identifier (see [QualifyGroupName]), or as
+// `group:<ExternalName>` when it has one. Groups defined in the policy file
+// are not stored here.
 type Group struct {
 	ID   uint `gorm:"primaryKey"`
 	Name string
+
+	// DisplayName is the name as the provisioning client sent it, before
+	// qualification and case folding. Empty for groups created by OIDC
+	// logins, which only know the qualified name.
+	DisplayName string
+
+	// ExternalID is the provisioning client's identifier for the group (the
+	// SCIM externalId, e.g. an Entra object id). Unique when set.
+	ExternalID sql.NullString
+
+	// ExternalName is ExternalID qualified like Name (see
+	// [QualifyGroupName]); unique when set. It is an alias the policy
+	// matches as well as Name, so a policy can reference a group by the
+	// stable id that identity providers such as Entra also send in the
+	// OIDC groups claim, and keep working when the group is renamed.
+	ExternalName sql.NullString
+
+	// Source is the system that created and owns the group row: OIDC
+	// logins create groups on demand, the SCIM endpoint manages its own.
+	// Memberships carry their own source (see [UserGroup]).
+	Source GroupSource
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -102,9 +132,21 @@ func FoldGroupName(name string) string {
 	}, name)
 }
 
+// IsSCIM reports whether the group is managed by the SCIM endpoint.
+func (g *Group) IsSCIM() bool {
+	return g != nil && g.Source == GroupSourceSCIM
+}
+
+// Matches reports whether a policy reference to the qualified name selects
+// the group: name is either its Name or its ExternalName.
+func (g *Group) Matches(name string) bool {
+	return g.Name == name || (g.ExternalName.Valid && g.ExternalName.String == name)
+}
+
 // groupNames returns the sorted, de-duplicated names of the groups in
-// memberships. A user can hold the same group from several sources.
-func groupNames(memberships []UserGroup) []string {
+// memberships. A user can hold the same group from several sources. With
+// withExternal, the groups' external names are included too.
+func groupNames(memberships []UserGroup, withExternal bool) []string {
 	if len(memberships) == 0 {
 		return nil
 	}
@@ -112,6 +154,10 @@ func groupNames(memberships []UserGroup) []string {
 	names := make([]string, 0, len(memberships))
 	for _, m := range memberships {
 		names = append(names, m.Group.Name)
+
+		if withExternal && m.Group.ExternalName.Valid {
+			names = append(names, m.Group.ExternalName.String)
+		}
 	}
 
 	slices.Sort(names)

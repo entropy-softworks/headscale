@@ -1,6 +1,7 @@
 package v2
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/juanfont/headscale/hscontrol/types"
@@ -303,4 +304,82 @@ func TestIdPGroupReferenceFoldsOnlyASCII(t *testing.T) {
 	pm := newIdPTestPM(t, idpPolicy("group:Kube-Admins@example.com"), users, nodes)
 	assert.Equal(t, []string{"100.64.0.1", "fd7a:115c:a1e0::1"}, filterSrcs(t, pm),
 		"only alice's group matches the ASCII reference")
+}
+
+// withSCIMGroup returns u as a SCIM member of the group name with the
+// external name externalName, as the SCIM endpoint stores a group whose
+// externalId is set.
+func withSCIMGroup(u types.User, name, externalName string) types.User {
+	u.Memberships = append(u.Memberships, types.UserGroup{
+		UserID: u.ID,
+		Source: types.GroupSourceSCIM,
+		Group: types.Group{
+			Name:         name,
+			ExternalName: sql.NullString{String: externalName, Valid: externalName != ""},
+			Source:       types.GroupSourceSCIM,
+		},
+	})
+
+	return u
+}
+
+// TestIdPGroupResolvesByExternalName checks that a group provisioned with an
+// externalId is selected by group:<externalId>@<domain> as well as by its
+// name, so policies can use ids that survive renames (and that Entra also
+// sends in the OIDC groups claim).
+func TestIdPGroupResolvesByExternalName(t *testing.T) {
+	alice, bob := idpTestUsers()
+	nodes := idpTestNodes(alice, bob)
+	users := types.Users{
+		withSCIMGroup(alice, "engineering@example.com", "6f1e-guid@example.com"),
+		withSCIMGroup(bob, "ops@example.com", ""),
+	}
+
+	aliceOnly := []string{"100.64.0.1", "fd7a:115c:a1e0::1"}
+
+	tests := []struct {
+		ref  string
+		want []string
+	}{
+		{"group:engineering@example.com", aliceOnly},
+		{"group:6f1e-guid@example.com", aliceOnly},
+		{"group:6F1E-GUID@Example.com", aliceOnly},
+		{"group:6f1e-guid@other.example", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ref, func(t *testing.T) {
+			pm := newIdPTestPM(t, idpPolicy(tt.ref), users, nodes)
+			assert.Equal(t, tt.want, filterSrcs(t, pm))
+		})
+	}
+
+	// Tag ownership resolves through the external name too.
+	pm := newIdPTestPM(t, `{
+		"tagOwners": {"tag:server": ["group:6f1e-guid@example.com"]},
+		"acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}]
+	}`, users, nodes)
+	assert.True(t, pm.UserCanHaveTag(users[0].View(), "tag:server"))
+	assert.False(t, pm.UserCanHaveTag(users[1].View(), "tag:server"))
+}
+
+// TestIdPGroupExternalNameChangeRecompiles checks that setting, or changing,
+// a group's external id is a policy change even though the group's name and
+// the user's memberships stay the same.
+func TestIdPGroupExternalNameChangeRecompiles(t *testing.T) {
+	alice, bob := idpTestUsers()
+	nodes := idpTestNodes(alice, bob)
+
+	pm := newIdPTestPM(t, idpPolicy("group:guid-1@example.com"),
+		types.Users{withSCIMGroup(alice, "eng@example.com", ""), bob}, nodes)
+	require.Empty(t, filterSrcs(t, pm))
+
+	changed, _, err := pm.SetUsers(types.Users{withSCIMGroup(alice, "eng@example.com", "guid-1@example.com"), bob})
+	require.NoError(t, err)
+	assert.True(t, changed, "gaining an external name must change the policy")
+	assert.Equal(t, []string{"100.64.0.1", "fd7a:115c:a1e0::1"}, filterSrcs(t, pm))
+
+	changed, _, err = pm.SetUsers(types.Users{withSCIMGroup(alice, "eng@example.com", "guid-2@example.com"), bob})
+	require.NoError(t, err)
+	assert.True(t, changed, "changing the external name must change the policy")
+	assert.Empty(t, filterSrcs(t, pm), "the old external name no longer grants access")
 }

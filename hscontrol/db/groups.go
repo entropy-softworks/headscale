@@ -26,6 +26,10 @@ const (
 	groupsDDLSQLite = `CREATE TABLE groups(
   id integer PRIMARY KEY AUTOINCREMENT,
   name text NOT NULL,
+  display_name text,
+  external_id text,
+  external_name text,
+  source text NOT NULL DEFAULT 'oidc',
 
   created_at datetime,
   updated_at datetime
@@ -48,6 +52,10 @@ const (
 	groupsDDLPostgres = `CREATE TABLE groups(
   id bigserial PRIMARY KEY,
   name text NOT NULL,
+  display_name text,
+  external_id text,
+  external_name text,
+  source text NOT NULL DEFAULT 'oidc',
 
   created_at timestamptz,
   updated_at timestamptz
@@ -66,10 +74,10 @@ const (
 
 // groupIndexes are created with the tables. The group_id index serves the
 // cascade from groups and lookups of a group's members.
-var groupIndexes = []string{
+var groupIndexes = append([]string{
 	`CREATE UNIQUE INDEX idx_groups_name ON groups(name)`,
 	`CREATE INDEX idx_user_groups_group_id ON user_groups(group_id)`,
-}
+}, scimGroupIndexes...)
 
 // ensureGroupsTables creates the groups and user_groups tables and their
 // indexes in one transaction, and is a no-op once they exist.
@@ -201,7 +209,12 @@ func ensureGroups(tx *gorm.DB, names []string) ([]uint, error) {
 
 	rows := make([]types.Group, 0, len(names))
 	for _, name := range names {
-		rows = append(rows, types.Group{Name: name, CreatedAt: now, UpdatedAt: now})
+		rows = append(rows, types.Group{
+			Name:      name,
+			Source:    types.GroupSourceOIDC,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
 	}
 
 	err := tx.Clauses(clause.OnConflict{

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -317,6 +318,15 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '' AND tags != 'null'
 				Migrate:  allowSCIMTokenKind,
 				Rollback: func(db *gorm.DB) error { return nil },
 			},
+			{
+				// Store what the SCIM endpoint provisions: users'
+				// userName, externalId and name parts, and groups'
+				// display name, external id and owning source (see
+				// migrateSCIMColumns). Explicit steps for both dialects.
+				ID:       "202609281400-scim",
+				Migrate:  migrateSCIMColumns,
+				Rollback: func(db *gorm.DB) error { return nil },
+			},
 		},
 	)
 
@@ -353,6 +363,8 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '' AND tags != 'null'
 			`DROP INDEX IF EXISTS "idx_name_provider_identifier"`,
 			`DROP INDEX IF EXISTS "idx_name_no_provider_identifier"`,
 			`DROP INDEX IF EXISTS "idx_nodes_auth_key_id"`,
+			`DROP INDEX IF EXISTS "idx_users_external_id"`,
+			`DROP INDEX IF EXISTS "idx_users_scim_user_name_key"`,
 		}
 
 		for _, dropSQL := range dropIndexes {
@@ -363,14 +375,14 @@ WHERE tags IS NOT NULL AND tags != '[]' AND tags != '' AND tags != 'null'
 		}
 
 		// Recreate indexes without backticks to match schema.sql format
-		indexes := []string{
+		indexes := slices.Concat([]string{
 			`CREATE INDEX idx_users_deleted_at ON users(deleted_at)`,
 			`CREATE INDEX idx_policies_deleted_at ON policies(deleted_at)`,
 			`CREATE UNIQUE INDEX idx_provider_identifier ON users(provider_identifier) WHERE provider_identifier IS NOT NULL`,
 			`CREATE UNIQUE INDEX idx_name_provider_identifier ON users(name, provider_identifier)`,
 			`CREATE UNIQUE INDEX idx_name_no_provider_identifier ON users(name) WHERE provider_identifier IS NULL`,
 			`CREATE INDEX idx_nodes_auth_key_id ON nodes(auth_key_id)`,
-		}
+		}, scimUserIndexes)
 
 		for _, indexSQL := range indexes {
 			err := tx.Exec(indexSQL).Error

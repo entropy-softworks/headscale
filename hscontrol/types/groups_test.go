@@ -1,6 +1,7 @@
 package types
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -143,4 +144,60 @@ func TestGroupsFromClaims(t *testing.T) {
 	got, found := GroupsFromClaims(claims, "realm_access.roles")
 	assert.True(t, found)
 	assert.Equal(t, []string{"kc-role"}, got)
+}
+
+func TestUserInGroupMatchesExternalName(t *testing.T) {
+	eng := Group{
+		ID:           1,
+		Name:         "engineering@example.com",
+		ExternalName: sql.NullString{String: "0af3-guid@example.com", Valid: true},
+		Source:       GroupSourceSCIM,
+	}
+	u := User{Memberships: []UserGroup{{GroupID: eng.ID, Source: GroupSourceSCIM, Group: eng}}}
+
+	tests := []struct {
+		name string
+		ref  string
+		want bool
+	}{
+		{"name", "engineering@example.com", true},
+		{"external name", "0af3-guid@example.com", true},
+		{"external name in another domain", "0af3-guid@other.example", false},
+		{"unrelated", "ops@example.com", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, u.InGroup(tt.ref), tt.name)
+		assert.Equal(t, tt.want, eng.Matches(tt.ref), tt.name)
+	}
+
+	assert.Equal(t, []string{"engineering@example.com"}, u.GroupNames(), "GroupNames lists names only")
+
+	// A group without an external name never matches the empty reference.
+	plain := User{Memberships: []UserGroup{{Group: Group{Name: "ops@example.com"}}}}
+	assert.False(t, plain.InGroup(""))
+}
+
+func TestUserPolicyEqualExternalNames(t *testing.T) {
+	withExternal := func(ext string) User {
+		g := Group{Name: "eng@example.com"}
+		if ext != "" {
+			g.ExternalName = sql.NullString{String: ext, Valid: true}
+		}
+
+		return User{ID: 1, Memberships: []UserGroup{{Group: g}}}
+	}
+
+	none, guid, other := withExternal(""), withExternal("guid@example.com"), withExternal("other@example.com")
+
+	assert.True(t, guid.PolicyEqual(&guid))
+	assert.False(t, none.PolicyEqual(&guid), "gaining an external name changes what group aliases match")
+	assert.False(t, guid.PolicyEqual(&none), "losing an external name changes what group aliases match")
+	assert.False(t, guid.PolicyEqual(&other), "a new external name changes what group aliases match")
+}
+
+func TestGroupIsSCIM(t *testing.T) {
+	assert.True(t, (&Group{Source: GroupSourceSCIM}).IsSCIM())
+	assert.False(t, (&Group{Source: GroupSourceOIDC}).IsSCIM())
+	assert.False(t, (*Group)(nil).IsSCIM())
 }
