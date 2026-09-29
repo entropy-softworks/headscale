@@ -9,19 +9,22 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/juanfont/headscale/hscontrol/scope"
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/types/change"
 )
 
 func init() {
 	registrations = append(registrations, registerUsers)
 }
 
-// Headscale models none of type/role/status and has a single tailnet, so these
-// fields are fixed strings. Every account is an active member.
+// Headscale models neither type nor role and has a single tailnet, so these
+// fields are fixed strings: every account is a member. The status is "active",
+// or "suspended" while the user is suspended.
 const (
-	userTypeMember   = "member"
-	userRoleMember   = "member"
-	userStatusActive = "active"
-	singleTailnetID  = "1"
+	userTypeMember      = "member"
+	userRoleMember      = "member"
+	userStatusActive    = "active"
+	userStatusSuspended = "suspended"
+	singleTailnetID     = "1"
 
 	// tagTailscaleCompat marks operations ported from the Tailscale API.
 	tagTailscaleCompat = "Tailscale compat"
@@ -118,6 +121,57 @@ func registerUsers(api huma.API, b Backend) {
 
 		return out, nil
 	})
+
+	huma.Register(api, requireScope(huma.Operation{
+		OperationID: "suspendUser",
+		Method:      http.MethodPost,
+		Path:        "/api/v2/users/{id}/suspend",
+		Summary:     "Suspend a user",
+		Description: "Suspends a user: their devices stay connected but can " +
+			"exchange no traffic, and they can neither log in nor add " +
+			"devices until restored. Tagged devices are unaffected.",
+		Tags:     usersTags,
+		Security: security,
+		Errors:   []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, scope.Users), func(ctx context.Context, in *userByIDInput) (*emptyOutput, error) {
+		return setUserSuspended(b, in.UserID, b.State.SuspendUser)
+	})
+
+	huma.Register(api, requireScope(huma.Operation{
+		OperationID: "restoreUser",
+		Method:      http.MethodPost,
+		Path:        "/api/v2/users/{id}/restore",
+		Summary:     "Restore a user",
+		Description: "Restores a suspended user's access, without a new login.",
+		Tags:        usersTags,
+		Security:    security,
+		Errors:      []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, scope.Users), func(ctx context.Context, in *userByIDInput) (*emptyOutput, error) {
+		return setUserSuspended(b, in.UserID, b.State.RestoreUser)
+	})
+}
+
+// setUserSuspended suspends or restores the user with rawID through set and
+// broadcasts the result. Suspending a suspended user, or restoring an active
+// one, succeeds without change, as in Tailscale.
+func setUserSuspended(
+	b Backend,
+	rawID string,
+	set func(types.UserID) (change.Change, error),
+) (*emptyOutput, error) {
+	view, err := lookupUser(b, rawID)
+	if err != nil {
+		return nil, err
+	}
+
+	c, err := set(types.UserID(view.ID()))
+	if err != nil {
+		return nil, mapError("changing user suspension", err)
+	}
+
+	b.Change(c)
+
+	return &emptyOutput{}, nil
 }
 
 // lookupUser resolves a user id to its UserView, mapping a malformed or unknown
@@ -157,6 +211,10 @@ func userFromView(b Backend, view types.UserView) User {
 		Type:          userTypeMember,
 		Role:          userRoleMember,
 		Status:        userStatusActive,
+	}
+
+	if view.IsSuspended() {
+		u.Status = userStatusSuspended
 	}
 
 	nodes := b.State.ListNodesByUser(types.UserID(view.ID()))

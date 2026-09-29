@@ -186,3 +186,43 @@ func TestAPIv2User_List_BadTailnet(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.Code)
 	assert.Contains(t, resp.Body.String(), `"message"`)
 }
+
+// TestAPIv2User_SuspendRestore checks Tailscale's suspend and restore
+// endpoints: they return 200, are idempotent, report the state as the user's
+// status, and cut off and reconnect the user's nodes.
+func TestAPIv2User_SuspendRestore(t *testing.T) {
+	app := createTestApp(t)
+	api := registerAPIV2(t, app)
+
+	user := app.state.CreateUserForTest("suspendee")
+	node := app.state.CreateRegisteredNodeForTest(user, "suspendee-node")
+	app.state.PutNodeInStoreForTest(*node)
+
+	nodeView := func() types.NodeView {
+		nv, ok := app.state.GetNodeByID(node.ID)
+		require.True(t, ok)
+
+		return nv
+	}
+
+	for range 2 {
+		resp := api.Post("/api/v2/users/"+userID(user)+"/suspend", struct{}{})
+		require.Equalf(t, http.StatusOK, resp.Code, "body: %s", resp.Body)
+	}
+
+	assert.Equal(t, "suspended", getUserByID(t, api, userID(user)).Status)
+	assert.True(t, app.state.IsNodeSuspended(nodeView()))
+
+	for range 2 {
+		resp := api.Post("/api/v2/users/"+userID(user)+"/restore", struct{}{})
+		require.Equalf(t, http.StatusOK, resp.Code, "body: %s", resp.Body)
+	}
+
+	assert.Equal(t, "active", getUserByID(t, api, userID(user)).Status)
+	assert.False(t, app.state.IsNodeSuspended(nodeView()))
+
+	for _, path := range []string{"/api/v2/users/999999/suspend", "/api/v2/users/nope/restore"} {
+		resp := api.Post(path, struct{}{})
+		assert.Equalf(t, http.StatusNotFound, resp.Code, "%s: %s", path, resp.Body)
+	}
+}

@@ -155,6 +155,10 @@ func init() {
 	listUsersCmd.Flags().StringP("email", "e", "", "Email")
 	userCmd.AddCommand(destroyUserCmd)
 	usernameAndIDFlag(destroyUserCmd)
+	userCmd.AddCommand(suspendUserCmd)
+	usernameAndIDFlag(suspendUserCmd)
+	userCmd.AddCommand(restoreUserCmd)
+	usernameAndIDFlag(restoreUserCmd)
 	userCmd.AddCommand(renameUserCmd)
 	usernameAndIDFlag(renameUserCmd)
 	renameUserCmd.Flags().StringP("new-name", "r", "", "New username")
@@ -242,6 +246,76 @@ var destroyUserCmd = &cobra.Command{
 
 		return printOutput(cmd, resp.JSON200, "User destroyed")
 	}),
+}
+
+var suspendUserCmd = &cobra.Command{
+	Use:   "suspend --identifier ID or --name NAME",
+	Short: "Suspends a user",
+	Long: "Suspends a user: their nodes stay connected but can exchange no traffic, " +
+		"and they can neither log in nor register nodes until restored. " +
+		"Tagged nodes are unaffected.",
+	RunE: clientRunE(func(ctx context.Context, client *clientv1.ClientWithResponses, cmd *cobra.Command, args []string) error {
+		return setUserSuspended(ctx, client, cmd, true)
+	}),
+}
+
+var restoreUserCmd = &cobra.Command{
+	Use:   "restore --identifier ID or --name NAME",
+	Short: "Restores a suspended user",
+	RunE: clientRunE(func(ctx context.Context, client *clientv1.ClientWithResponses, cmd *cobra.Command, args []string) error {
+		return setUserSuspended(ctx, client, cmd, false)
+	}),
+}
+
+// setUserSuspended resolves the user from the flags and suspends or restores
+// them through the v2 API.
+func setUserSuspended(
+	ctx context.Context,
+	client *clientv1.ClientWithResponses,
+	cmd *cobra.Command,
+	suspend bool,
+) error {
+	_, user, err := resolveSingleUser(ctx, client, cmd)
+	if err != nil {
+		return err
+	}
+
+	// The v2 calls run under the command's context, which already carries
+	// the CLI timeout.
+	_, v2client, cancel, err := newV2Client()
+	if err != nil {
+		return err
+	}
+	defer cancel()
+
+	var (
+		status int
+		body   []byte
+		done   string
+	)
+
+	if suspend {
+		resp, err := v2client.SuspendUserWithResponse(ctx, user.Id)
+		if err != nil {
+			return fmt.Errorf("suspending user: %w", err)
+		}
+
+		status, body, done = resp.StatusCode(), resp.Body, "User suspended"
+	} else {
+		resp, err := v2client.RestoreUserWithResponse(ctx, user.Id)
+		if err != nil {
+			return fmt.Errorf("restoring user: %w", err)
+		}
+
+		status, body, done = resp.StatusCode(), resp.Body, "User restored"
+	}
+
+	err = v2Error(status, body)
+	if err != nil {
+		return err
+	}
+
+	return printOutput(cmd, map[string]string{colResult: done}, done)
 }
 
 var listUsersCmd = &cobra.Command{

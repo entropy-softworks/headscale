@@ -636,6 +636,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v2/users/{id} (the `GetUser` operationId).
 	GetUser(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RestoreUser Restore a user
+	//
+	// Restores a suspended user's access, without a new login.
+	//
+	// Requires the `users` OAuth scope (an admin API key is all-access).
+	//
+	// Corresponds with POST /api/v2/users/{id}/restore (the `RestoreUser` operationId).
+	RestoreUser(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SuspendUser Suspend a user
+	//
+	// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected.
+	//
+	// Requires the `users` OAuth scope (an admin API key is all-access).
+	//
+	// Corresponds with POST /api/v2/users/{id}/suspend (the `SuspendUser` operationId).
+	SuspendUser(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // DeleteDevice Delete a device
@@ -1161,6 +1179,44 @@ func (c *Client) ListUsers(ctx context.Context, tailnet string, params *ListUser
 // Corresponds with GET /api/v2/users/{id} (the `GetUser` operationId).
 func (c *Client) GetUser(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetUserRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RestoreUser Restore a user
+//
+// Restores a suspended user's access, without a new login.
+//
+// Requires the `users` OAuth scope (an admin API key is all-access).
+//
+// Corresponds with POST /api/v2/users/{id}/restore (the `RestoreUser` operationId).
+func (c *Client) RestoreUser(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRestoreUserRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SuspendUser Suspend a user
+//
+// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected.
+//
+// Requires the `users` OAuth scope (an admin API key is all-access).
+//
+// Corresponds with POST /api/v2/users/{id}/suspend (the `SuspendUser` operationId).
+func (c *Client) SuspendUser(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSuspendUserRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -2224,6 +2280,74 @@ func NewGetUserRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewRestoreUserRequest constructs an http.Request for the RestoreUser method
+func NewRestoreUserRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/users/%s/restore", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSuspendUserRequest constructs an http.Request for the SuspendUser method
+func NewSuspendUserRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/users/%s/suspend", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -2532,6 +2656,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v2/users/{id} (the `GetUser` operationId).
 	GetUserWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetUserResponse, error)
+
+	// RestoreUserWithResponse Restore a user
+	//
+	// Restores a suspended user's access, without a new login.
+	//
+	// Requires the `users` OAuth scope (an admin API key is all-access).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/users/{id}/restore (the `RestoreUser` operationId).
+	RestoreUserWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RestoreUserResponse, error)
+
+	// SuspendUserWithResponse Suspend a user
+	//
+	// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected.
+	//
+	// Requires the `users` OAuth scope (an admin API key is all-access).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/users/{id}/suspend (the `SuspendUser` operationId).
+	SuspendUserWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*SuspendUserResponse, error)
 }
 
 type DeleteDeviceResponse struct {
@@ -4110,6 +4256,158 @@ func (r GetUserResponse) ContentType() string {
 	return ""
 }
 
+type RestoreUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EmptyOutputBody
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ErrorModel
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ErrorModel
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ErrorModel
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ErrorModel
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ErrorModel
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RestoreUserResponse) GetJSON200() *EmptyOutputBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RestoreUserResponse) GetApplicationproblemJSON401() *ErrorModel {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RestoreUserResponse) GetApplicationproblemJSON403() *ErrorModel {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RestoreUserResponse) GetApplicationproblemJSON404() *ErrorModel {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RestoreUserResponse) GetApplicationproblemJSON422() *ErrorModel {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RestoreUserResponse) GetApplicationproblemJSON500() *ErrorModel {
+	return r.ApplicationproblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r RestoreUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RestoreUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RestoreUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RestoreUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SuspendUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *EmptyOutputBody
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ErrorModel
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ErrorModel
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *ErrorModel
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ErrorModel
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ErrorModel
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SuspendUserResponse) GetJSON200() *EmptyOutputBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SuspendUserResponse) GetApplicationproblemJSON401() *ErrorModel {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SuspendUserResponse) GetApplicationproblemJSON403() *ErrorModel {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SuspendUserResponse) GetApplicationproblemJSON404() *ErrorModel {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SuspendUserResponse) GetApplicationproblemJSON422() *ErrorModel {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r SuspendUserResponse) GetApplicationproblemJSON500() *ErrorModel {
+	return r.ApplicationproblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SuspendUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SuspendUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SuspendUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SuspendUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // DeleteDeviceWithResponse Delete a device
 //
 // Requires the `devices:core` OAuth scope (an admin API key is all-access).
@@ -4547,6 +4845,40 @@ func (c *ClientWithResponses) GetUserWithResponse(ctx context.Context, id string
 		return nil, err
 	}
 	return ParseGetUserResponse(rsp)
+}
+
+// RestoreUserWithResponse Restore a user
+//
+// Restores a suspended user's access, without a new login.
+//
+// Requires the `users` OAuth scope (an admin API key is all-access).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/users/{id}/restore (the `RestoreUser` operationId).
+func (c *ClientWithResponses) RestoreUserWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RestoreUserResponse, error) {
+	rsp, err := c.RestoreUser(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRestoreUserResponse(rsp)
+}
+
+// SuspendUserWithResponse Suspend a user
+//
+// Suspends a user: their devices stay connected but can exchange no traffic, and they can neither log in nor add devices until restored. Tagged devices are unaffected.
+//
+// Requires the `users` OAuth scope (an admin API key is all-access).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/users/{id}/suspend (the `SuspendUser` operationId).
+func (c *ClientWithResponses) SuspendUserWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*SuspendUserResponse, error) {
+	rsp, err := c.SuspendUser(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSuspendUserResponse(rsp)
 }
 
 // ParseDeleteDeviceResponse parses an HTTP response from a DeleteDeviceWithResponse call
@@ -5786,6 +6118,128 @@ func ParseGetUserResponse(rsp *http.Response) (*GetUserResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest User
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRestoreUserResponse parses an HTTP response from a RestoreUserWithResponse call
+func ParseRestoreUserResponse(rsp *http.Response) (*RestoreUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RestoreUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EmptyOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSuspendUserResponse parses an HTTP response from a SuspendUserWithResponse call
+func ParseSuspendUserResponse(rsp *http.Response) (*SuspendUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SuspendUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EmptyOutputBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
