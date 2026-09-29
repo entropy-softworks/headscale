@@ -230,6 +230,12 @@ const (
 	GroupSource       = "group.source"
 	GroupsSkipped     = "groups.skipped"
 	MembershipsPurged = "group.memberships.purged"
+
+	GroupID           = "group.id"
+	SCIMIgnoredOp     = "scim.patch.ignored"
+	SCIMErrorType     = "scim.error.type"
+	SCIMErrorDetail   = "scim.error.detail"
+	SCIMResourceCount = "scim.resource.count"
 )
 
 // Component field for sub-loggers.

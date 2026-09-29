@@ -30,6 +30,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/metrics"
+	apiscim "github.com/juanfont/headscale/hscontrol/api/scim"
 	apiv1 "github.com/juanfont/headscale/hscontrol/api/v1"
 	apiv2 "github.com/juanfont/headscale/hscontrol/api/v2"
 	"github.com/juanfont/headscale/hscontrol/capver"
@@ -539,6 +540,17 @@ func (h *Headscale) createRouter(apiV1Mux, apiV2Mux http.Handler) *chi.Mux {
 		r.Handle("/v1/*", serveHumaMux(apiV1Mux))
 		r.Handle("/v2/*", serveHumaMux(apiV2Mux))
 	})
+	// SCIM 2.0 provisioning, for identity providers. Only on the remote
+	// listener: every request authenticates with a SCIM credential, and the
+	// unix socket's local trust has no use for it. Not mounted, it is 404.
+	if h.cfg.SCIM.Enabled {
+		r.Mount(apiscim.BasePath, apiscim.Handler(apiscim.Backend{
+			State:  h.state,
+			Change: h.Change,
+			Cfg:    h.cfg,
+		}))
+	}
+
 	// Ping response endpoint: receives HEAD from clients responding
 	// to a [tailcfg.PingRequest]. The unguessable ping ID serves as authentication.
 	r.Head("/machine/ping-response", h.PingResponseHandler)
