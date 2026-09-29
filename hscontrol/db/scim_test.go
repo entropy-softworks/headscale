@@ -1435,3 +1435,34 @@ func TestReleaseSCIMGroup(t *testing.T) {
 		assert.Equal(t, []types.UserID{alice}, revoked)
 	})
 }
+
+func TestListSCIMUsersByID(t *testing.T) {
+	groupsTestDBs(t, func(t *testing.T, db *HSDatabase) {
+		t.Helper()
+
+		local := db.CreateUserForTest("local")
+		b := mustSCIMUser(t, db, "b@example.com", "")
+		a := mustSCIMUser(t, db, "a@example.com", "")
+
+		ids := make([]types.UserID, 0, 4+scimUserIDChunk)
+		ids = append(ids, types.UserID(b.ID), types.UserID(local.ID), 9999, types.UserID(a.ID))
+		// More ids than one IN list takes, to cover chunking.
+		for i := range scimUserIDChunk {
+			ids = append(ids, types.UserID(100000+i))
+		}
+
+		users, err := ListSCIMUsersByID(db.DB, ids...)
+		require.NoError(t, err)
+
+		got := make([]uint, 0, len(users))
+		for _, u := range users {
+			got = append(got, u.ID)
+		}
+
+		assert.Equal(t, []uint{b.ID, a.ID}, got, "only SCIM users, by id")
+
+		users, err = ListSCIMUsersByID(db.DB)
+		require.NoError(t, err)
+		assert.Empty(t, users)
+	})
+}

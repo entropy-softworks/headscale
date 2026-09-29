@@ -1,6 +1,7 @@
 package db
 
 import (
+	"cmp"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -573,6 +574,32 @@ func ListSCIMUsers(tx *gorm.DB, filter SCIMUserFilter, startIndex, count int) ([
 	}
 
 	return users, total, nil
+}
+
+// scimUserIDChunk bounds the ids of one IN list, well under SQLite's limit
+// on bound parameters.
+const scimUserIDChunk = 500
+
+// ListSCIMUsersByID returns the SCIM users among ids, ordered by id, without
+// their memberships; ids that are not SCIM users are left out. It is how a
+// group's members are rendered without reading the whole directory.
+func ListSCIMUsersByID(tx *gorm.DB, ids ...types.UserID) ([]types.User, error) {
+	users := []types.User{}
+
+	for chunk := range slices.Chunk(ids, scimUserIDChunk) {
+		var part []types.User
+
+		err := tx.Scopes(SCIMUserFilter{}.scope).Where("users.id IN ?", chunk).Find(&part).Error
+		if err != nil {
+			return nil, fmt.Errorf("listing SCIM users by id: %w", err)
+		}
+
+		users = append(users, part...)
+	}
+
+	slices.SortFunc(users, func(a, b types.User) int { return cmp.Compare(a.ID, b.ID) })
+
+	return users, nil
 }
 
 // FindUnlinkedSCIMUserByUserName returns the SCIM user not yet linked to a

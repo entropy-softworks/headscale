@@ -863,6 +863,14 @@ func (s *NodeStore) SetSuspendedUsers(ids []types.UserID) {
 	s.RebuildPeerMaps()
 }
 
+// UserSuspended reports whether uid is in the published set of suspended
+// users.
+func (s *NodeStore) UserSuspended(uid types.UserID) bool {
+	_, ok := s.suspendedUsers()[uid]
+
+	return ok
+}
+
 // IsSuspended reports whether node belongs to a suspended user.
 func (s *NodeStore) IsSuspended(node types.NodeView) bool {
 	if !node.Valid() || node.IsTagged() {

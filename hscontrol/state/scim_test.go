@@ -616,3 +616,59 @@ func TestSCIMWritesDoNotWaitForBatchTick(t *testing.T) {
 		}
 	}
 }
+
+func TestNeedsSuspensionSync(t *testing.T) {
+	for _, tt := range []struct {
+		changed, active, published, want bool
+	}{
+		{changed: true, active: false, published: false, want: true},
+		{changed: true, active: true, published: true, want: true},
+		{changed: false, active: true, published: false, want: false},
+		{changed: false, active: false, published: true, want: false},
+		// The published set lost a suspension, or kept a lifted one.
+		{changed: false, active: false, published: false, want: true},
+		{changed: false, active: true, published: true, want: true},
+	} {
+		assert.Equal(t, tt.want, needsSuspensionSync(tt.changed, tt.active, tt.published), "%+v", tt)
+	}
+}
+
+// TestSCIMRetryRepairsUnpublishedSuspension simulates a deactivation that
+// committed but failed to publish the suspended set: the retry, which
+// stores nothing new, must still cut the user's node off.
+func TestSCIMRetryRepairsUnpublishedSuspension(t *testing.T) {
+	f := scimTestState(t)
+	s := f.s
+
+	user, _, err := s.CreateSCIMUser(types.SCIMUserAttributes{UserName: "dave@example.com", Active: true}, true)
+	require.NoError(t, err)
+
+	uid := types.UserID(user.ID)
+	deactivate := func(a *types.SCIMUserAttributes) error {
+		a.Active = false
+
+		return nil
+	}
+
+	_, _, err = s.PatchSCIMUser(uid, deactivate)
+	require.NoError(t, err)
+
+	node, ok := s.GetNodeByID(f.daveNode.ID)
+	require.True(t, ok)
+	require.True(t, s.nodeStore.IsSuspended(node))
+
+	// The failed publish: the database says suspended, the NodeStore not.
+	s.nodeStore.SetSuspendedUsers(nil)
+	require.False(t, s.nodeStore.IsSuspended(node))
+
+	_, c, err := s.PatchSCIMUser(uid, deactivate)
+	require.NoError(t, err)
+	assert.True(t, s.nodeStore.IsSuspended(node), "the retry publishes the suspension")
+	assert.False(t, c.IsEmpty(), "and broadcasts it")
+
+	// A further identical write has nothing to repair.
+	_, c, err = s.PatchSCIMUser(uid, deactivate)
+	require.NoError(t, err)
+	assert.True(t, s.nodeStore.IsSuspended(node))
+	assert.True(t, c.IsEmpty(), "nothing changed, nothing to broadcast")
+}

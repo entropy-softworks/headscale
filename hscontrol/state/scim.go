@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,7 +17,9 @@ import (
 // hscontrol/db/scim.go for the storage model and error sentinels) in a
 // transaction and bring the NodeStore and policy manager up to date
 // afterwards. Each returns the change to broadcast; an empty change means
-// nothing any node sees changed. domain is the domain SCIM group names are
+// nothing any node sees changed. A write whose transaction committed but
+// whose refresh failed returns its result with [ErrSCIMRefresh]. domain is
+// the domain SCIM group names are
 // qualified with (see [types.QualifyGroupName]).
 
 // GetSCIMUser returns the SCIM user uid, or [hsdb.ErrUserNotFound].
@@ -34,6 +37,12 @@ func (s *State) GetSCIMUserByUserName(userName string) (*types.User, error) {
 // [hsdb.ErrUserNotFound].
 func (s *State) GetSCIMUserByExternalID(externalID string) (*types.User, error) {
 	return hsdb.GetSCIMUserByExternalID(s.db.DB, externalID)
+}
+
+// ListSCIMUsersByID returns the SCIM users among ids, ordered by id; see
+// [hsdb.ListSCIMUsersByID].
+func (s *State) ListSCIMUsersByID(ids ...types.UserID) ([]types.User, error) {
+	return hsdb.ListSCIMUsersByID(s.db.DB, ids...)
 }
 
 // ListSCIMUsers returns a page of SCIM users and the total number of
@@ -82,9 +91,9 @@ func (s *State) CreateSCIMUser(attrs types.SCIMUserAttributes, adopt bool) (*typ
 			Msg("scim create adopted an existing OIDC user")
 	}
 
-	c, err := s.afterSCIMUserWrite(uid, adopted, suspensionChanged, attrs.Active)
-	if err != nil {
-		return nil, change.Change{}, err
+	c, refreshErr := s.afterSCIMUserWrite(uid, adopted, suspensionChanged, attrs.Active)
+	if refreshErr != nil {
+		c, refreshErr = refreshFailed(refreshErr)
 	}
 
 	// As in CreateUser: a new user can make SSH policies resolvable that
@@ -94,8 +103,11 @@ func (s *State) CreateSCIMUser(attrs types.SCIMUserAttributes, adopt bool) (*typ
 	}
 
 	user, err = s.GetUserByID(uid)
+	if err != nil {
+		return nil, c, err
+	}
 
-	return user, c, err
+	return user, c, refreshErr
 }
 
 // ReplaceSCIMUser replaces the SCIM user's attributes (PUT) and applies
@@ -135,14 +147,31 @@ func (s *State) PatchSCIMUser(uid types.UserID, fn func(*types.SCIMUserAttribute
 		return nil, change.Change{}, err
 	}
 
-	c, err := s.afterSCIMUserWrite(uid, true, suspensionChanged, active)
-	if err != nil {
-		return nil, change.Change{}, err
+	c, refreshErr := s.afterSCIMUserWrite(uid, true, suspensionChanged, active)
+	if refreshErr != nil {
+		c, refreshErr = refreshFailed(refreshErr)
 	}
 
 	user, err := s.GetUserByID(uid)
+	if err != nil {
+		return nil, c, err
+	}
 
-	return user, c, err
+	return user, c, refreshErr
+}
+
+// ErrSCIMRefresh is returned, wrapped, by the SCIM writes when their
+// transaction committed but bringing the NodeStore or policy manager up to
+// date afterwards failed. The resource and change returned with it are
+// valid: the change is a full policy change, so connected nodes still
+// recompute what they can, and a caller should report the write as done
+// (a client retrying a committed create would get a conflict).
+var ErrSCIMRefresh = errors.New("scim: write committed, but updating in-memory state failed")
+
+// refreshFailed is what a committed SCIM write reports when its refresh
+// failed; see [ErrSCIMRefresh].
+func refreshFailed(err error) (change.Change, error) {
+	return change.PolicyChange(), fmt.Errorf("%w: %w", ErrSCIMRefresh, err)
 }
 
 // suspensionTime is the suspended_at a SCIM active flag asks for.
@@ -157,12 +186,22 @@ func suspensionTime(active bool) time.Time {
 // afterSCIMUserWrite brings the NodeStore and policy manager up to date
 // after a committed SCIM user write, and returns the change to broadcast.
 func (s *State) afterSCIMUserWrite(uid types.UserID, mayHaveNodes, suspensionChanged, active bool) (change.Change, error) {
-	if suspensionChanged {
+	if needsSuspensionSync(suspensionChanged, active, s.nodeStore.UserSuspended(uid)) {
 		// Refreshes the user's nodes and the policy manager too.
 		return s.applySuspensionChange(uid, !active)
 	}
 
 	return s.refreshSCIMUser(uid, mayHaveNodes)
+}
+
+// needsSuspensionSync reports whether a SCIM user write must publish the
+// suspended set: when the write changed the user's suspension, or when the
+// published set disagrees with the stored state. The latter happens when an
+// earlier write committed a suspension but failed to publish it
+// ([ErrSCIMRefresh]); its retry stores nothing new, so without this check
+// the user would keep their peers until an unrelated suspension change.
+func needsSuspensionSync(changed, active, published bool) bool {
+	return changed || published == active
 }
 
 // DeleteSCIMUser deprovisions the SCIM user: it is suspended at once, so it
@@ -343,6 +382,9 @@ func (s *State) CreateSCIMGroup(
 	}
 
 	c, err := s.applyGroupMembershipChanges(affected)
+	if err != nil {
+		c, err = refreshFailed(err)
+	}
 
 	return group, c, err
 }
@@ -368,6 +410,9 @@ func (s *State) UpdateSCIMGroup(domain string, id uint, ops ...types.SCIMGroupOp
 	}
 
 	c, err := s.applyGroupMembershipChanges(affected)
+	if err != nil {
+		c, err = refreshFailed(err)
+	}
 
 	return group, c, err
 }
@@ -383,7 +428,12 @@ func (s *State) DeleteSCIMGroup(id uint) (change.Change, error) {
 		return change.Change{}, err
 	}
 
-	return s.applyGroupMembershipChanges(members)
+	c, err := s.applyGroupMembershipChanges(members)
+	if err != nil {
+		return refreshFailed(err)
+	}
+
+	return c, nil
 }
 
 // ReleaseSCIMGroup hands the SCIM group back to OIDC logins, for when SCIM
