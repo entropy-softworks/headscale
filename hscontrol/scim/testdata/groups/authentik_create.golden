@@ -1,0 +1,16 @@
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:Group"
+  ],
+  "id": "1",
+  "externalId": "0b7f5a4c-2d3e-4f5a-8b9c-0d1e2f3a4b5c",
+  "displayName": "admins",
+  "members": [
+    {
+      "value": "1"
+    },
+    {
+      "value": "2"
+    }
+  ]
+}

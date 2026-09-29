@@ -1,0 +1,17 @@
+{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:User"
+  ],
+  "id": "1",
+  "externalId": "8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159",
+  "userName": "Test_User_1d1b7a1a-5c0a-4d4b-8e2d-2c1f2e2e0a1e@contoso.com",
+  "displayName": "Test User",
+  "active": true,
+  "emails": [
+    {
+      "value": "test.user@contoso.com",
+      "type": "work",
+      "primary": true
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+  "userName": "akadmin",
+  "name": {"formatted": "authentik Default Admin", "givenName": "authentik Default", "familyName": "Admin"},
+  "displayName": "authentik Default Admin",
+  "active": true,
+  "emails": [{"value": "admin@example.com", "type": "other", "primary": true}],
+  "externalId": "8c9f2a1d3e4b5c6d7e8f9a0b1c2d3e4f",
+  "photos": []
+}
