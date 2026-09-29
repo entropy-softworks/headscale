@@ -11,6 +11,7 @@ import (
 
 	clientv1 "github.com/juanfont/headscale/gen/client/v1"
 	"github.com/juanfont/headscale/hscontrol/util"
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +37,13 @@ func init() {
 	scimTokensCmd.AddCommand(listSCIMTokensCmd)
 	scimTokensCmd.AddCommand(revokeSCIMTokenCmd)
 	scimTokensCmd.AddCommand(deleteSCIMTokenCmd)
+
+	scimCmd.AddCommand(scimUsersCmd)
+	scimUsersCmd.AddCommand(listSCIMUsersCmd)
+
+	scimCmd.AddCommand(scimGroupsCmd)
+	scimGroupsCmd.AddCommand(listSCIMGroupsCmd)
+	scimGroupsCmd.AddCommand(releaseSCIMGroupCmd)
 }
 
 var scimCmd = &cobra.Command{
@@ -87,6 +95,174 @@ var deleteSCIMTokenCmd = &cobra.Command{
 	Aliases: []string{"remove", aliasDel},
 	Args:    cobra.ExactArgs(1),
 	RunE:    clientRunE(deleteSCIMToken),
+}
+
+var scimUsersCmd = &cobra.Command{
+	Use:   "users",
+	Short: "Inspect the users provisioned through SCIM",
+	Long: `Users provisioned through SCIM are managed by the identity provider: it
+creates, updates, suspends (active=false) and deletes them. A provisioned user
+is linked to their OIDC login at their first login. While SCIM is enabled,
+"headscale users rename" and "headscale users destroy" refuse them; a
+suspension set with "headscale users suspend" lasts until the identity
+provider next sends the user's active state.`,
+	Aliases: []string{"user"},
+}
+
+var listSCIMUsersCmd = &cobra.Command{
+	Use:     cmdList,
+	Short:   "List SCIM users",
+	Aliases: []string{"ls", cmdShow},
+	Args:    cobra.NoArgs,
+	RunE:    clientRunE(listSCIMUsers),
+}
+
+var scimGroupsCmd = &cobra.Command{
+	Use:   "groups",
+	Short: "Manage the groups provisioned through SCIM",
+	Long: `Groups provisioned through SCIM are referenced in the policy as
+group:<displayName>@<domain>, and as group:<externalId>@<domain> when they
+have an external id. SCIM alone decides their members: OIDC logins asserting
+such a group in their groups claim do not grant it.`,
+	Aliases: []string{"group"},
+}
+
+var listSCIMGroupsCmd = &cobra.Command{
+	Use:     cmdList,
+	Short:   "List SCIM groups",
+	Aliases: []string{"ls", cmdShow},
+	Args:    cobra.NoArgs,
+	RunE:    clientRunE(listSCIMGroups),
+}
+
+var releaseSCIMGroupCmd = &cobra.Command{
+	Use:   "release ID",
+	Short: "Hand a SCIM group back to OIDC logins",
+	Long: `Release a SCIM group, for when SCIM provisioning is turned off. Its SCIM
+memberships and external id are removed at once; OIDC logins asserting the
+group in their groups claim grant it again from their next login. The group
+keeps its id and name, so policy references to group:<name> keep working,
+while references to its external id alias stop matching.
+
+Refused while scim.enabled is true: the identity provider still owns the
+group and would provision it again. Disable SCIM first.`,
+	Args: cobra.ExactArgs(1),
+	RunE: clientRunE(releaseSCIMGroup),
+}
+
+func listSCIMUsers(ctx context.Context, client *clientv1.ClientWithResponses, cmd *cobra.Command, _ []string) error {
+	resp, err := client.ListScimUsersWithResponse(ctx)
+	if err != nil {
+		return fmt.Errorf("listing scim users: %w", err)
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		return apiError(resp.StatusCode(), resp.ApplicationproblemJSONDefault)
+	}
+
+	users := resp.JSON200.ScimUsers
+
+	return printListOutput(cmd, users, func() error {
+		rows := make([][]string, 0, len(users))
+		for _, u := range users {
+			rows = append(rows, []string{
+				u.Id,
+				u.UserName,
+				u.ExternalId,
+				u.Email,
+				u.Name,
+				yesNo(u.Linked),
+				activeOrSuspended(u.Suspended),
+			})
+		}
+
+		return renderTable(
+			[]string{"ID", "User name", "External ID", "Email", "Username", "Linked", "Status"},
+			rows,
+		)
+	})
+}
+
+func listSCIMGroups(ctx context.Context, client *clientv1.ClientWithResponses, cmd *cobra.Command, _ []string) error {
+	resp, err := client.ListScimGroupsWithResponse(ctx)
+	if err != nil {
+		return fmt.Errorf("listing scim groups: %w", err)
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		return apiError(resp.StatusCode(), resp.ApplicationproblemJSONDefault)
+	}
+
+	groups := resp.JSON200.ScimGroups
+
+	return printListOutput(cmd, groups, func() error {
+		rows := make([][]string, 0, len(groups))
+		for _, g := range groups {
+			rows = append(rows, []string{
+				g.Id,
+				g.DisplayName,
+				g.PolicyReference,
+				g.ExternalId,
+				g.PolicyAlias,
+				strconv.FormatInt(g.MemberCount, util.Base10),
+				g.Source,
+			})
+		}
+
+		return renderTable(
+			[]string{"ID", "Display name", "Policy reference", "External ID", "Alias", "Members", "Source"},
+			rows,
+		)
+	})
+}
+
+func releaseSCIMGroup(ctx context.Context, client *clientv1.ClientWithResponses, cmd *cobra.Command, args []string) error {
+	id, err := strconv.ParseUint(args[0], util.Base10, 64)
+	if err != nil {
+		return fmt.Errorf("%w: invalid scim group id %q", errMissingParameter, args[0])
+	}
+
+	idStr := strconv.FormatUint(id, util.Base10)
+
+	if !confirmAction(cmd, fmt.Sprintf(
+		"Release SCIM group %s? Its SCIM members lose it now. From then on, any user whose OIDC "+
+			"groups claim asserts the group is granted it at their next login, so policies "+
+			"referencing it follow the groups claim instead of SCIM.",
+		idStr,
+	)) {
+		return printOutput(cmd, map[string]string{colResult: "Group not released"}, "Group not released")
+	}
+
+	resp, err := client.ReleaseScimGroupWithResponse(ctx, idStr)
+	if err != nil {
+		return fmt.Errorf("releasing scim group: %w", err)
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		return apiError(resp.StatusCode(), resp.ApplicationproblemJSONDefault)
+	}
+
+	done := "SCIM group " + idStr + " released"
+
+	return printOutput(cmd, map[string]string{colResult: done}, done)
+}
+
+// yesNo renders a flag as a table cell.
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+
+	return "no"
+}
+
+// activeOrSuspended renders a user's suspension as a table cell.
+func activeOrSuspended(suspended bool) string {
+	if suspended {
+		return pterm.LightRed("suspended")
+	}
+
+	return pterm.LightGreen("active")
 }
 
 // scimTokenExpiration reads --expiration: nil for "never" (any case),

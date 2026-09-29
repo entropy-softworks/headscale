@@ -219,8 +219,10 @@ var createUserCmd = &cobra.Command{
 }
 
 var destroyUserCmd = &cobra.Command{
-	Use:     "destroy --identifier ID or --name NAME",
-	Short:   "Destroys a user",
+	Use:   "destroy --identifier ID or --name NAME",
+	Short: "Destroys a user",
+	Long: "Destroys a user and its pre-auth keys. While SCIM is enabled, users provisioned " +
+		"through SCIM cannot be destroyed here: deprovision them in the identity provider.",
 	Aliases: []string{cmdDelete},
 	RunE: clientRunE(func(ctx context.Context, client *clientv1.ClientWithResponses, cmd *cobra.Command, args []string) error {
 		_, user, err := resolveSingleUser(ctx, client, cmd)
@@ -253,7 +255,9 @@ var suspendUserCmd = &cobra.Command{
 	Short: "Suspends a user",
 	Long: "Suspends a user: their nodes stay connected but can exchange no traffic, " +
 		"and they can neither log in nor register nodes until restored. " +
-		"Tagged nodes are unaffected.",
+		"Tagged nodes are unaffected. For a user provisioned through SCIM, the identity " +
+		"provider owns the suspension: its next update of the user's active state " +
+		"overrides this one.",
 	RunE: clientRunE(func(ctx context.Context, client *clientv1.ClientWithResponses, cmd *cobra.Command, args []string) error {
 		return setUserSuspended(ctx, client, cmd, true)
 	}),
@@ -262,6 +266,8 @@ var suspendUserCmd = &cobra.Command{
 var restoreUserCmd = &cobra.Command{
 	Use:   "restore --identifier ID or --name NAME",
 	Short: "Restores a suspended user",
+	Long: "Restores a suspended user. While SCIM is enabled, users provisioned through SCIM " +
+		"cannot be restored here: reactivate them in the identity provider.",
 	RunE: clientRunE(func(ctx context.Context, client *clientv1.ClientWithResponses, cmd *cobra.Command, args []string) error {
 		return setUserSuspended(ctx, client, cmd, false)
 	}),
@@ -363,18 +369,22 @@ var listUsersCmd = &cobra.Command{
 						user.Email,
 						user.CreatedAt.Format(HeadscaleDateTimeFormat),
 						strings.Join(user.Groups, ", "),
+						yesNo(user.ScimManaged),
+						activeOrSuspended(user.Suspended),
 					},
 				)
 			}
 
-			return renderTable([]string{"ID", "Name", "Username", "Email", colCreated, "Groups"}, rows)
+			return renderTable([]string{"ID", "Name", "Username", "Email", colCreated, "Groups", "SCIM", "Status"}, rows)
 		})
 	}),
 }
 
 var renameUserCmd = &cobra.Command{
-	Use:     "rename",
-	Short:   "Renames a user",
+	Use:   "rename",
+	Short: "Renames a user",
+	Long: "Renames a user. While SCIM is enabled, users provisioned through SCIM cannot be " +
+		"renamed here: change them in the identity provider.",
 	Aliases: []string{"mv"},
 	RunE: clientRunE(func(ctx context.Context, client *clientv1.ClientWithResponses, cmd *cobra.Command, args []string) error {
 		userId, _, err := resolveSingleUser(ctx, client, cmd)

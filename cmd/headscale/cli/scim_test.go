@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	clientv1 "github.com/juanfont/headscale/gen/client/v1"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,4 +73,88 @@ func TestSCIMTokenIDArg(t *testing.T) {
 		_, err := scimTokenIDArg([]string{bad})
 		require.ErrorIs(t, err, errMissingParameter, bad)
 	}
+}
+
+func TestSCIMAdminCommandsRegistered(t *testing.T) {
+	for _, path := range [][]string{
+		{"scim", "users", "list"},
+		{"scim", "groups", "list"},
+		{"scim", "groups", "release"},
+	} {
+		cmd, _, err := rootCmd.Find(path)
+		require.NoError(t, err, path)
+		assert.Equal(t, path[len(path)-1], cmd.Name())
+	}
+}
+
+// scimAdminServer serves canned SCIM admin responses and records the
+// requests it receives.
+func scimAdminServer(t *testing.T, requests *[]string) *clientv1.ClientWithResponses {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*requests = append(*requests, r.Method+" "+r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/scim/user":
+			_, _ = w.Write([]byte(`{"scimUsers":[{"id":"1","userName":"alice@example.com","linked":true}]}`))
+		case "GET /api/v1/scim/group":
+			_, _ = w.Write([]byte(`{"scimGroups":[{"id":"2","name":"eng@example.com","memberCount":3}]}`))
+		case "POST /api/v1/scim/group/2/release":
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"status":404,"title":"Not Found","detail":"releasing scim group"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := clientv1.NewClientWithResponses(srv.URL)
+	require.NoError(t, err)
+
+	return client
+}
+
+func scimAdminCmd(t *testing.T) *cobra.Command {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().Bool("force", true, "")
+
+	return cmd
+}
+
+func TestSCIMAdminCommands(t *testing.T) {
+	var requests []string
+
+	client := scimAdminServer(t, &requests)
+	ctx := t.Context()
+
+	require.NoError(t, listSCIMUsers(ctx, client, scimAdminCmd(t), nil))
+	require.NoError(t, listSCIMGroups(ctx, client, scimAdminCmd(t), nil))
+	require.NoError(t, releaseSCIMGroup(ctx, client, scimAdminCmd(t), []string{"2"}))
+
+	err := releaseSCIMGroup(ctx, client, scimAdminCmd(t), []string{"9"})
+	require.ErrorContains(t, err, "releasing scim group", "the API's error is reported")
+
+	err = releaseSCIMGroup(ctx, client, scimAdminCmd(t), []string{"abc"})
+	require.ErrorIs(t, err, errMissingParameter, "an invalid id is rejected before any request")
+
+	assert.Equal(t, []string{
+		"GET /api/v1/scim/user",
+		"GET /api/v1/scim/group",
+		"POST /api/v1/scim/group/2/release",
+		"POST /api/v1/scim/group/9/release",
+	}, requests)
+}
+
+func TestSCIMTableCells(t *testing.T) {
+	assert.Equal(t, "yes", yesNo(true))
+	assert.Equal(t, "no", yesNo(false))
+	assert.Contains(t, activeOrSuspended(true), "suspended")
+	assert.Contains(t, activeOrSuspended(false), "active")
 }
