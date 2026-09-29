@@ -82,6 +82,8 @@ func TestSchemas(t *testing.T) {
 	displayName, ok := findAttr(schemas[1].Attributes, "displayName")
 	require.True(t, ok)
 	assert.True(t, displayName.Required)
+	assert.Equal(t, UniquenessServer, displayName.Uniqueness,
+		"group names are unique in headscale, as persistence enforces")
 
 	members, ok := findAttr(schemas[1].Attributes, "members")
 	require.True(t, ok)

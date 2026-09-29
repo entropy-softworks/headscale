@@ -267,8 +267,11 @@ func userAttributes() []Attribute {
 }
 
 func groupAttributes() []Attribute {
-	displayName := strAttr("displayName", "A human-readable name for the Group.")
+	displayName := strAttr("displayName", "A human-readable name for the Group, "+
+		"referenced in the policy as group:<displayName>@<domain>. Unique "+
+		"case-insensitively among groups.")
 	displayName.Required = true
+	displayName.Uniqueness = UniquenessServer
 
 	memberType := immutable(strAttr("type", "The type of the member."))
 	memberType.CanonicalValues = []string{ResourceTypeUser}
@@ -284,7 +287,7 @@ func groupAttributes() []Attribute {
 		SubAttributes: []Attribute{
 			immutable(strAttr("value", "The id of the member.")),
 			immutable(refAttr(ResourceTypeUser)),
-			readOnly(strAttr("display", "The userName of the member.")),
+			readOnly(strAttr("display", "The displayName of the member, or its userName.")),
 			memberType,
 		},
 	}
