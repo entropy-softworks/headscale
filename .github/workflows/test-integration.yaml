@@ -337,6 +337,11 @@ jobs:
           - TestHASubnetRouterFailoverDockerDisconnect
           - TestHeadscale
           - TestTailscaleNodesJoiningHeadcale
+          - TestSCIMProvisionLinkAndGroupAccess
+          - TestSCIMSuspendAndRestore
+          - TestSCIMDeleteUserRemovesNodes
+          - TestSCIMAuth
+          - TestSCIMRequireProvisioning
           - TestSSHOneUserToAll
           - TestSSHMultipleUsersAllToAll
           - TestSSHNoSSHConfigured
