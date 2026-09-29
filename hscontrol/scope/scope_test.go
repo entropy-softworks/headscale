@@ -34,7 +34,12 @@ func oracle(have, want Scope) bool {
 	h, w := classify(have), classify(want)
 
 	if h.super {
-		// "all" grants everything; "all:read" grants only reads.
+		// scim is outside both super-scopes; otherwise "all" grants
+		// everything and "all:read" grants only reads.
+		if w.resource == "scim" {
+			return false
+		}
+
 		return !h.read || w.read
 	}
 
@@ -80,6 +85,17 @@ func TestGrantsHandPicked(t *testing.T) {
 		{granted: nil, want: AuthKeysRead, ok: false},
 		{granted: []Scope{"garbage"}, want: AuthKeys, ok: false},
 		{granted: []Scope{"garbage"}, want: "garbage", ok: true},
+		// scim is explicit-only: the super-scopes do not reach it.
+		{granted: []Scope{SCIM}, want: SCIM, ok: true},
+		{granted: []Scope{All}, want: SCIM, ok: false},
+		{granted: []Scope{AllRead}, want: SCIM, ok: false},
+		{granted: []Scope{All, AllRead}, want: SCIM, ok: false},
+		{granted: []Scope{All, SCIM}, want: SCIM, ok: true},
+		{granted: []Scope{SCIM}, want: Users, ok: false},
+		{granted: []Scope{SCIM}, want: UsersRead, ok: false},
+		{granted: []Scope{SCIM}, want: All, ok: false},
+		{granted: []Scope{Users}, want: SCIM, ok: false},
+		{granted: []Scope{"scim:read"}, want: SCIM, ok: false},
 	}
 
 	for _, tt := range tests {
@@ -155,10 +171,10 @@ func TestReadNeverGrantsWrite(t *testing.T) {
 	}
 }
 
-func TestAllGrantsEverything(t *testing.T) {
+func TestAllGrantsEverythingButSCIM(t *testing.T) {
 	for _, w := range Known() {
-		if !Grants([]Scope{All}, w) {
-			t.Errorf("all should grant %q", w)
+		if got := Grants([]Scope{All}, w); got != (w != SCIM) {
+			t.Errorf("Grants([all], %q) = %v, want %v", w, got, w != SCIM)
 		}
 	}
 }
@@ -203,6 +219,8 @@ func TestRequiresTags(t *testing.T) {
 		{scopes: []Scope{OAuthKeys}, requires: false},
 		{scopes: []Scope{PolicyFile, AuthKeys}, requires: true},
 		{scopes: []Scope{DevicesCoreRead}, requires: false},
+		{scopes: []Scope{SCIM}, requires: false},
+		{scopes: []Scope{SCIM, AuthKeys}, requires: true},
 		{scopes: nil, requires: false},
 	}
 
@@ -227,9 +245,9 @@ func TestKnownIsComplete(t *testing.T) {
 		seen[s] = true
 	}
 
-	// 7 resources × 2 (write+read) + 2 super-scopes = 16.
-	if len(known) != 16 {
-		t.Errorf("Known() has %d scopes, want 16", len(known))
+	// 7 resources × 2 (write+read) + 2 super-scopes + scim (write only) = 17.
+	if len(known) != 17 {
+		t.Errorf("Known() has %d scopes, want 17", len(known))
 	}
 }
 
@@ -240,7 +258,7 @@ func TestValid(t *testing.T) {
 		}
 	}
 
-	for _, s := range []Scope{"", "EVIL:superuser", "*::*", "../../etc/passwd", "AUTH_KEYS", "devices", "all:write"} {
+	for _, s := range []Scope{"", "EVIL:superuser", "*::*", "../../etc/passwd", "AUTH_KEYS", "devices", "all:write", "scim:read", "SCIM"} {
 		if s.Valid() {
 			t.Errorf("unknown scope %q reported valid", s)
 		}

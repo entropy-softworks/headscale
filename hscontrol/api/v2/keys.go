@@ -194,6 +194,10 @@ func registerKeys(api huma.API, b Backend) {
 			}
 
 			for i := range clients {
+				if !mayReadClient(ctx, clients[i].Scopes) {
+					continue
+				}
+
 				out.Body.Keys = append(out.Body.Keys, oauthClientToKey(&clients[i], ""))
 			}
 		}
@@ -225,9 +229,11 @@ func registerKeys(api huma.API, b Backend) {
 		// the auth-key path. The lookup is gated on the caller actually holding
 		// oauth_keys:read so a token without it cannot tell a real client id (403)
 		// from an unknown key (404) — i.e. no client-existence oracle.
+		// A client the caller may not read (see mayReadClient) falls through
+		// like an unknown id, so it is indistinguishable from a missing one.
 		if requireKeyScope(ctx, scope.OAuthKeysRead) == nil {
 			client, err := b.State.GetOAuthClientByClientID(in.KeyID)
-			if err == nil {
+			if err == nil && mayReadClient(ctx, client.Scopes) {
 				return &keyOutput{Body: oauthClientToKey(client, "")}, nil
 			}
 		}
@@ -267,9 +273,12 @@ func registerKeys(api huma.API, b Backend) {
 
 		// Gated on oauth_keys (write) for the same no-existence-oracle reason as
 		// getKey: a token without it must not learn that an id is an OAuth client.
+		// Deleting is symmetric with creating: the token must cover every scope
+		// of the client (see mayManageClient), otherwise the client falls
+		// through like an unknown id.
 		if requireKeyScope(ctx, scope.OAuthKeys) == nil {
-			_, err = b.State.GetOAuthClientByClientID(in.KeyID)
-			if err == nil {
+			client, err := b.State.GetOAuthClientByClientID(in.KeyID)
+			if err == nil && mayManageClient(ctx, client.Scopes) {
 				err = b.State.RevokeOAuthClient(in.KeyID)
 				if err != nil {
 					return nil, mapError("deleting oauth client", err)
@@ -299,6 +308,48 @@ func registerKeys(api huma.API, b Backend) {
 
 		return &deleteKeyOutput{}, nil
 	})
+}
+
+// mayManageClient reports whether the request's credential may delete an OAuth
+// client holding clientScopes: an admin API key always may; an OAuth token only
+// if its grant covers every one of them, the same rule createOAuthClient
+// applies. Without it an oauth_keys token could delete a client it could never
+// have created, e.g. one holding the explicit-only scim scope.
+func mayManageClient(ctx context.Context, clientScopes []string) bool {
+	tokenScopes, isOAuth := principalScopes(ctx)
+	if !isOAuth {
+		return true
+	}
+
+	granted := scope.Parse(tokenScopes)
+	for _, s := range clientScopes {
+		if !scope.Grants(granted, scope.Scope(s)) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// mayReadClient reports whether the request's credential may see an OAuth
+// client holding clientScopes. oauth_keys:read reads every Tailscale-model
+// client, as in Tailscale; a client holding an explicit-only scope (scim) is
+// visible only to a token that holds that scope itself, so no super-scope
+// token can discover provisioning clients. An admin API key sees all.
+func mayReadClient(ctx context.Context, clientScopes []string) bool {
+	tokenScopes, isOAuth := principalScopes(ctx)
+	if !isOAuth {
+		return true
+	}
+
+	granted := scope.Parse(tokenScopes)
+	for _, s := range scope.Parse(clientScopes) {
+		if s.ExplicitOnly() && !scope.Grants(granted, s) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // requireKeyScope authorizes a keys operation for an OAuth access token. An admin

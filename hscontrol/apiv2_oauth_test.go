@@ -577,3 +577,154 @@ func TestAPIv2OAuth_SetDeviceRoutesCompat(t *testing.T) {
 		return v2RouteCall(t, resp.StatusCode, raw)
 	})
 }
+
+// TestAPIv2OAuth_SCIMScope covers the explicit-only scim scope on the v2 surface:
+// an admin key creates a tagless scim client whose tokens carry scim, those
+// tokens reach no v2 operation, and neither an all-scope client nor an
+// all-scope token can reach scim.
+func TestAPIv2OAuth_SCIMScope(t *testing.T) {
+	_, baseURL, admin := newOAuthTestServer(t)
+
+	// scim does not require tags.
+	_, scimSecret := createClient(t, baseURL, admin, []string{"scim"}, nil)
+
+	status, m := mintToken(t, baseURL, "", scimSecret, "", false)
+	require.Equalf(t, http.StatusOK, status, "mint scim token: %v", m)
+	assert.Equal(t, "scim", m["scope"])
+
+	scimTok, _ := m["access_token"].(string)
+	require.NotEmpty(t, scimTok)
+
+	// A scim-only token is denied the admin surface.
+	st, body := apiReq(t, http.MethodGet, baseURL+"/api/v2/tailnet/-/devices", scimTok, nil)
+	assert.Truef(t, scopeDenied(st, body), "scim token must not list devices: %d %s", st, body)
+
+	st, body = apiReq(t, http.MethodGet, baseURL+"/api/v2/tailnet/-/users", scimTok, nil)
+	assert.Truef(t, scopeDenied(st, body), "scim token must not list users: %d %s", st, body)
+
+	st, _ = apiPost(t, baseURL+"/api/v2/tailnet/-/keys", scimTok, apiv2.CreateKeyRequest{
+		KeyType: "client", Scopes: []string{"scim"},
+	})
+	assert.Equal(t, http.StatusForbidden, st, "scim token cannot create clients")
+
+	// An all-scope client cannot narrow to scim.
+	_, allSecret := createClient(t, baseURL, admin, []string{"all"}, []string{"tag:ci"})
+	status, m = mintToken(t, baseURL, "", allSecret, "scim", false)
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Equal(t, "invalid_scope", m["error"])
+
+	// An all-scope token cannot create a scim client.
+	allTok := tokenFor(t, baseURL, allSecret)
+	st, _ = apiPost(t, baseURL+"/api/v2/tailnet/-/keys", allTok, apiv2.CreateKeyRequest{
+		KeyType: "client", Scopes: []string{"scim"},
+	})
+	assert.Equal(t, http.StatusForbidden, st, "all does not grant scim, so it cannot delegate it")
+
+	// A client holding both oauth_keys and scim may delegate scim.
+	_, delegSecret := createClient(t, baseURL, admin, []string{"oauth_keys", "scim"}, nil)
+	delegTok := tokenFor(t, baseURL, delegSecret)
+	st, body = apiPost(t, baseURL+"/api/v2/tailnet/-/keys", delegTok, apiv2.CreateKeyRequest{
+		KeyType: "client", Scopes: []string{"scim"},
+	})
+	assert.Equalf(t, http.StatusOK, st, "oauth_keys+scim delegates scim: %s", body)
+}
+
+// TestAPIv2OAuth_SCIMClientProtected covers reading and deleting clients that
+// hold the explicit-only scim scope: a token must hold scim to see one, and
+// must cover every scope of any client it deletes (symmetric with creation).
+// An admin API key is unaffected.
+func TestAPIv2OAuth_SCIMClientProtected(t *testing.T) {
+	app, baseURL, admin := newOAuthTestServer(t)
+
+	keysURL := baseURL + "/api/v2/tailnet/-/keys"
+
+	scimID, _ := createClient(t, baseURL, admin, []string{"scim"}, nil)
+	plainID, _ := createClient(t, baseURL, admin, []string{"devices:core:read"}, []string{"tag:ci"})
+
+	listIDs := func(t *testing.T, bearer string) []string {
+		t.Helper()
+
+		status, body := apiReq(t, http.MethodGet, keysURL, bearer, nil)
+		require.Equalf(t, http.StatusOK, status, "%s", body)
+
+		var out struct {
+			Keys []apiv2.Key `json:"keys"`
+		}
+		require.NoError(t, json.Unmarshal(body, &out))
+
+		ids := make([]string, 0, len(out.Keys))
+		for _, k := range out.Keys {
+			ids = append(ids, k.ID)
+		}
+
+		return ids
+	}
+
+	exists := func(t *testing.T, id string) bool {
+		t.Helper()
+
+		_, err := app.state.GetOAuthClientByClientID(id)
+
+		return err == nil
+	}
+
+	for _, scopes := range [][]string{{"oauth_keys"}, {"all"}} {
+		t.Run(scopes[0]+" token", func(t *testing.T) {
+			_, secret := createClient(t, baseURL, admin, scopes, []string{"tag:ci"})
+			tok := tokenFor(t, baseURL, secret)
+
+			ids := listIDs(t, tok)
+			assert.NotContains(t, ids, scimID, "scim client hidden from list")
+
+			assert.NotEqual(t, http.StatusOK, apiGet(t, keysURL+"/"+scimID, tok),
+				"scim client hidden from get")
+
+			st, _ := apiReq(t, http.MethodDelete, keysURL+"/"+scimID, tok, nil)
+			assert.NotEqual(t, http.StatusOK, st)
+			assert.True(t, exists(t, scimID), "scim client must survive")
+		})
+	}
+
+	t.Run("oauth_keys token cannot delete a client beyond its grant", func(t *testing.T) {
+		_, secret := createClient(t, baseURL, admin, []string{"oauth_keys"}, []string{"tag:ci"})
+		tok := tokenFor(t, baseURL, secret)
+
+		assert.Contains(t, listIDs(t, tok), plainID, "non-scim clients stay readable")
+
+		st, _ := apiReq(t, http.MethodDelete, keysURL+"/"+plainID, tok, nil)
+		assert.NotEqual(t, http.StatusOK, st)
+		assert.True(t, exists(t, plainID))
+	})
+
+	t.Run("all token deletes a covered client", func(t *testing.T) {
+		victim, _ := createClient(t, baseURL, admin, []string{"devices:core:read"}, []string{"tag:ci"})
+		_, secret := createClient(t, baseURL, admin, []string{"all"}, []string{"tag:ci"})
+		tok := tokenFor(t, baseURL, secret)
+
+		st, body := apiReq(t, http.MethodDelete, keysURL+"/"+victim, tok, nil)
+		assert.Equalf(t, http.StatusOK, st, "%s", body)
+		assert.False(t, exists(t, victim))
+	})
+
+	t.Run("oauth_keys+scim token sees and deletes the scim client", func(t *testing.T) {
+		other, _ := createClient(t, baseURL, admin, []string{"scim"}, nil)
+		_, secret := createClient(t, baseURL, admin, []string{"oauth_keys", "scim"}, nil)
+		tok := tokenFor(t, baseURL, secret)
+
+		assert.Contains(t, listIDs(t, tok), other)
+		assert.Equal(t, http.StatusOK, apiGet(t, keysURL+"/"+other, tok))
+
+		st, body := apiReq(t, http.MethodDelete, keysURL+"/"+other, tok, nil)
+		assert.Equalf(t, http.StatusOK, st, "%s", body)
+		assert.False(t, exists(t, other))
+	})
+
+	t.Run("admin api key sees and deletes the scim client", func(t *testing.T) {
+		assert.Contains(t, listIDs(t, admin), scimID)
+		assert.Equal(t, http.StatusOK, apiGet(t, keysURL+"/"+scimID, admin))
+
+		st, body := apiReq(t, http.MethodDelete, keysURL+"/"+scimID, admin, nil)
+		assert.Equalf(t, http.StatusOK, st, "%s", body)
+		assert.False(t, exists(t, scimID))
+	})
+}

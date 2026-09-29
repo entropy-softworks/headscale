@@ -76,13 +76,14 @@ func TestSuperScopeProperties(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		want := scopeGen().Draw(rt, "want")
 
-		// all grants everything.
-		if !Grants([]Scope{All}, want) {
-			rt.Fatalf("all did not grant %q", want)
+		// all grants everything except the explicit-only scim.
+		if Grants([]Scope{All}, want) != !want.ExplicitOnly() {
+			rt.Fatalf("all grant of %q = %v, want %v",
+				want, Grants([]Scope{All}, want), !want.ExplicitOnly())
 		}
 
-		// all:read grants exactly the read scopes.
-		if Grants([]Scope{AllRead}, want) != want.IsRead() {
+		// all:read grants exactly the read scopes, scim excepted.
+		if Grants([]Scope{AllRead}, want) != (want.IsRead() && !want.ExplicitOnly()) {
 			rt.Fatalf("all:read grant of %q = %v, want IsRead = %v",
 				want, Grants([]Scope{AllRead}, want), want.IsRead())
 		}

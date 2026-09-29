@@ -46,6 +46,17 @@ const (
 
 	Users     Scope = "users"
 	UsersRead Scope = "users:read"
+
+	// SCIM gates the SCIM 2.0 provisioning endpoints (/scim/v2), through which
+	// an identity provider creates, updates, suspends and deletes users and
+	// groups. It is a Headscale extension with no Tailscale counterpart.
+	//
+	// SCIM is explicit-only: neither [All] nor [AllRead] grants it, so an
+	// existing all-scope client does not silently gain the power to rewrite the
+	// user directory; "all" keeps meaning the Tailscale-compatible admin
+	// surface. There is no scim:read, because a provisioning client always
+	// writes and a read-only one has no use.
+	SCIM Scope = "scim"
 )
 
 const readSuffix = ":read"
@@ -62,7 +73,14 @@ func Known() []Scope {
 		PolicyFile, PolicyFileRead,
 		FeatureSettings, FeatureSettingsRead,
 		Users, UsersRead,
+		SCIM,
 	}
+}
+
+// ExplicitOnly reports whether s must be granted by name: the super-scopes
+// [All] and [AllRead] do not cover it (see [SCIM]).
+func (s Scope) ExplicitOnly() bool {
+	return strings.TrimSuffix(string(s), readSuffix) == string(SCIM)
 }
 
 // Valid reports whether s is part of the known scope vocabulary. Scopes outside
@@ -105,15 +123,19 @@ func Grants(granted []Scope, want Scope) bool {
 }
 
 // satisfies reports whether a single held scope satisfies want: exact match; a
-// write scope grants its own :read subset; "all" grants everything; "all:read"
-// grants any :read scope.
+// write scope grants its own :read subset; "all" grants everything except the
+// explicit-only scopes; "all:read" grants any :read scope.
 func satisfies(have, want Scope) bool {
-	if have == want || have == All {
+	if have == want {
 		return true
 	}
 
-	if have == AllRead {
-		return want.IsRead()
+	if have == All || have == AllRead {
+		if want.ExplicitOnly() {
+			return false
+		}
+
+		return have == All || want.IsRead()
 	}
 
 	// A write scope grants its own read subset, e.g. auth_keys ⊇ auth_keys:read.

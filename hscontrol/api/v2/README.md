@@ -37,6 +37,14 @@ headscale's own conventions. The headscale-native admin API stays at `/api/v1`
   against the token's grant (`scope.Grants`, where a write scope subsumes its
   `:read` and `all`/`all:read` are super-scopes). The two are told apart by
   credential prefix.
+- `scim` is a Headscale-only scope gating SCIM provisioning (`/scim/v2`, not
+  this API). It is **explicit-only**: `all`/`all:read` do not grant it, so an
+  all-scope client cannot mint a SCIM token or create a SCIM client. Tokens
+  holding only `scim` are denied every v2 operation. On the keys endpoint a
+  token must itself hold `scim` to see a client that holds it, and deleting any
+  client requires the token's grant to cover every scope of that client (the
+  rule creation already applies); a denied client reads as not found. Admin API
+  keys are unaffected.
 - Resolve one entity by id with a typed getter (`GetNodeByID`, `GetUserByID`,
   `GetAPIKeyByID`, `GetPreAuthKeyByID`); add one to state/db if it is missing
   rather than scanning a `List`. Build responses from the view accessors
